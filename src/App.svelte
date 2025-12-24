@@ -8,6 +8,16 @@
   let selectedTaxon: any = null;
   let showTaxonDropdown = false;
   let demoIdentifications: any[] = [];
+  let showAlgorithmModal = false;
+  let demoIdCounter = 0;
+  let showDisagreementModal = false;
+  let pendingIdentification: any = null;
+
+  const emojis = ['😊', '🙂', '😎', '🤓', '😀', '🤗', '😃', '😄', '🙃', '😁', '😺', '🐱', '🦊', '🐶', '🐼', '🐨', '🦁', '🐯', '🐸', '🐝'];
+
+  function getRandomEmoji() {
+    return emojis[Math.floor(Math.random() * emojis.length)];
+  }
 
   async function fetchObservation() {
     if (!observationId.trim()) {
@@ -18,6 +28,9 @@
     loading = true;
     error = '';
     observation = null;
+    // Clear demo identifications when loading a new observation
+    demoIdentifications = [];
+    demoIdCounter = 0;
 
     try {
       const response = await fetch(`https://api.inaturalist.org/v1/observations/${observationId}`);
@@ -123,27 +136,103 @@
     }
   }
 
-  function selectTaxon(taxon: any) {
-    selectedTaxon = taxon;
+  async function selectTaxon(taxon: any) {
+    // Fetch full taxon details to ensure we have ancestor_ids
+    try {
+      const response = await fetch(`https://api.inaturalist.org/v1/taxa/${taxon.id}`);
+      const data = await response.json();
+      if (data.results && data.results.length > 0) {
+        selectedTaxon = data.results[0];
+      } else {
+        selectedTaxon = taxon;
+      }
+    } catch (e) {
+      console.error('Error fetching full taxon:', e);
+      selectedTaxon = taxon;
+    }
     taxonSearchQuery = taxon.name;
     showTaxonDropdown = false;
   }
 
   function submitIdentification() {
-    if (!selectedTaxon) return;
+    if (!selectedTaxon || !observation) return;
+
+    const personLetter = String.fromCharCode(65 + demoIdCounter); // A, B, C, etc.
+    const emoji = getRandomEmoji();
+
+    // Check if this is a disagreement (sibling taxon) or ancestor
+    let isDisagreement = false;
+    let previousObservationTaxon = null;
+    let isAncestor = false;
+
+    if (observation.taxon) {
+      // If they're the same taxon, just add the ID without any disagreement logic
+      if (selectedTaxon.id === observation.taxon.id) {
+        // Same taxon - no disagreement, no ancestor check needed
+        isAncestor = false;
+        isDisagreement = false;
+      } else {
+        const selectedAncestors = selectedTaxon.ancestor_ids || [];
+        const observationAncestors = observation.taxon.ancestor_ids || [];
+
+        // Check if selected taxon is an ancestor of the observation taxon (but NOT the same taxon)
+        const selectedIsAncestor = observationAncestors.includes(selectedTaxon.id);
+        const observationIsAncestor = selectedAncestors.includes(observation.taxon.id);
+
+        if (selectedIsAncestor) {
+          // Selected taxon is an ancestor - show disagreement modal
+          isAncestor = true;
+        } else if (!observationIsAncestor) {
+          // Different branch - automatic disagreement
+          isDisagreement = true;
+          previousObservationTaxon = observation.taxon;
+        }
+      }
+    }
 
     const newId = {
       id: `demo-${Date.now()}`,
       user: {
-        login: 'demo_user',
-        icon: null
+        login: `Person${personLetter}`,
+        icon: null,
+        emoji: emoji
       },
       taxon: selectedTaxon,
       current: true,
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      disagreement: isDisagreement,
+      previous_observation_taxon: previousObservationTaxon
     };
 
-    demoIdentifications = [...demoIdentifications, newId];
+    if (isAncestor) {
+      // Show modal for potential disagreement
+      pendingIdentification = newId;
+      showDisagreementModal = true;
+    } else {
+      // Add directly
+      demoIdentifications = [...demoIdentifications, newId];
+      demoIdCounter++;
+      taxonSearchQuery = '';
+      selectedTaxon = null;
+      taxonSearchResults = [];
+    }
+  }
+
+  function handleDisagreementChoice(isDisagreement: boolean) {
+    if (!pendingIdentification) return;
+
+    if (isDisagreement && observation.taxon) {
+      pendingIdentification.disagreement = true;
+      pendingIdentification.previous_observation_taxon = observation.taxon;
+    } else {
+      pendingIdentification.disagreement = false;
+      pendingIdentification.previous_observation_taxon = null;
+    }
+
+    demoIdentifications = [...demoIdentifications, pendingIdentification];
+    demoIdCounter++;
+    showDisagreementModal = false;
+    pendingIdentification = null;
     taxonSearchQuery = '';
     selectedTaxon = null;
     taxonSearchResults = [];
@@ -155,6 +244,293 @@
 
   function getAllIdentifications(obs: any): any[] {
     return [...getSortedIdentifications(obs), ...demoIdentifications];
+  }
+
+  // Reactive computation of all identifications
+  // Explicitly depend on demoIdentifications to ensure proper reactivity
+  $: allIdentifications = observation ? [...getSortedIdentifications(observation), ...demoIdentifications] : [];
+
+  // Reactive computation of algorithm summary and community taxon
+  // Explicitly depend on demoIdentifications to ensure proper reactivity
+  $: algorithmSummary = observation && demoIdentifications !== undefined ? calculateAlgorithmSummary(observation) : [];
+  $: communityTaxon = algorithmSummary.find(row => row.isCommunityTaxon)?.taxon || null;
+  $: communityTaxonStats = algorithmSummary.find(row => row.isCommunityTaxon) || null;
+
+  // Update observation taxon and quality grade when identifications change
+  // This needs to run even when there are 0 identifications (e.g., when all are removed)
+  // Explicitly depend on allIdentifications and communityTaxon to ensure reactivity
+  $: if (observation && allIdentifications !== undefined && communityTaxon !== undefined) {
+    updateObservationTaxon();
+    updateObservationQualityGrade();
+  }
+
+  function updateObservationTaxon() {
+    if (!observation) return;
+
+    const currentIdentifications = getAllIdentifications(observation).filter(id => id.current !== false);
+
+    // If there are no identifications (all removed), set taxon to null
+    if (currentIdentifications.length === 0) {
+      observation.taxon = null;
+      return;
+    }
+
+    // If there's only one identification, set observation taxon to that identification's taxon
+    if (currentIdentifications.length === 1) {
+      observation.taxon = currentIdentifications[0].taxon;
+      return;
+    }
+
+    // If there are 2+ identifications
+    if (currentIdentifications.length >= 2) {
+      // Check if there's a community taxon
+      if (communityTaxon) {
+        // Check if there are any disagreements
+        const hasDisagreements = currentIdentifications.some(id => id.disagreement === true);
+
+        if (!hasDisagreements) {
+          // No disagreements - look for the finest taxon that's downstream of (or same as) community taxon
+          const downstreamIds = currentIdentifications.filter(id => {
+            if (!id.taxon) return false;
+            // Check if this ID's taxon is the community taxon or downstream of it
+            return id.taxon.id === communityTaxon.id ||
+              (id.taxon.ancestor_ids && id.taxon.ancestor_ids.includes(communityTaxon.id));
+          });
+
+          if (downstreamIds.length > 0) {
+            // Find the finest (most specific) among the downstream taxa
+            const finestDownstream = downstreamIds.reduce((finest, current) => {
+              const finestRank = finest.taxon?.rank_level || Infinity;
+              const currentRank = current.taxon?.rank_level || Infinity;
+              return currentRank < finestRank ? current : finest;
+            });
+            observation.taxon = finestDownstream.taxon;
+            return;
+          }
+        }
+
+        // If there are disagreements or no downstream IDs found, set to community taxon
+        observation.taxon = communityTaxon;
+      } else {
+        // No community taxon yet - find the finest taxon among all IDs that doesn't have disagreements
+        // Sort by rank_level (lower = finer) and pick the finest one
+        const nonDisagreementIds = currentIdentifications.filter(id => !id.disagreement);
+        if (nonDisagreementIds.length > 0) {
+          const finestId = nonDisagreementIds.reduce((finest, current) => {
+            const finestRank = finest.taxon?.rank_level || Infinity;
+            const currentRank = current.taxon?.rank_level || Infinity;
+            return currentRank < finestRank ? current : finest;
+          });
+          observation.taxon = finestId.taxon;
+        }
+      }
+    }
+  }
+
+  function updateObservationQualityGrade() {
+    if (!observation) return;
+
+    // If there's a community taxon, check its rank
+    if (communityTaxon) {
+      // Species rank level is 10, anything finer (lower number) is subspecies/variety/form
+      // If community taxon is species (rank_level = 10) and observation taxon is finer (rank_level < 10),
+      // then quality grade should be needs_id, not research
+      const communityIsSpeciesOrFiner = communityTaxon.rank_level && communityTaxon.rank_level <= 10;
+
+      // Check if observation taxon is finer than community taxon
+      const observationIsFiner = observation.taxon &&
+        observation.taxon.rank_level &&
+        communityTaxon.rank_level &&
+        observation.taxon.rank_level < communityTaxon.rank_level;
+
+      if (communityIsSpeciesOrFiner && !observationIsFiner) {
+        observation.quality_grade = 'research';
+      } else {
+        observation.quality_grade = 'needs_id';
+      }
+    } else {
+      // No community taxon means needs ID
+      observation.quality_grade = 'needs_id';
+    }
+  }
+
+  function calculateAlgorithmSummary(obs: any): any[] {
+    const identifications = getAllIdentifications(obs).filter(id => id.current !== false);
+
+    // Collect all unique taxa from all identifications
+    const taxaMap = new Map();
+
+    identifications.forEach(id => {
+      if (!id.taxon) return;
+
+      // Add the identification's taxon
+      if (!taxaMap.has(id.taxon.id)) {
+        taxaMap.set(id.taxon.id, id.taxon);
+      }
+
+      // Add all ancestors of this taxon
+      if (id.taxon.ancestors) {
+        id.taxon.ancestors.forEach(ancestor => {
+          if (!taxaMap.has(ancestor.id)) {
+            taxaMap.set(ancestor.id, ancestor);
+          }
+        });
+      }
+    });
+
+    // Add "Life" as the root taxon
+    const lifeTaxon = {
+      id: 48460,
+      name: 'Life',
+      rank: 'stateofmatter',
+      rank_level: 100,
+      preferred_common_name: null,
+      ancestor_ids: []
+    };
+    if (!taxaMap.has(lifeTaxon.id)) {
+      taxaMap.set(lifeTaxon.id, lifeTaxon);
+    }
+
+    // Build a tree structure by finding children for each taxon
+    const childrenMap = new Map();
+    taxaMap.forEach(taxon => {
+      childrenMap.set(taxon.id, []);
+    });
+
+    taxaMap.forEach(taxon => {
+      // For each taxon, find its parent (the most specific/closest ancestor it has)
+      if (taxon.ancestor_ids && taxon.ancestor_ids.length > 0) {
+        // Find the immediate parent: the ancestor in our map that is closest to this taxon
+        // In taxonomy, higher rank_level = broader (Kingdom ~70), lower rank_level = finer (Species ~10)
+        // So we want the ancestor with the LOWEST rank_level that is still GREATER than this taxon's rank_level
+        let parentId = null;
+        let lowestParentRankLevel = Infinity;
+
+        taxon.ancestor_ids.forEach(ancestorId => {
+          const ancestor = taxaMap.get(ancestorId);
+          if (ancestor &&
+              (ancestor.rank_level || 0) > (taxon.rank_level || 0) &&
+              (ancestor.rank_level || 0) < lowestParentRankLevel) {
+            lowestParentRankLevel = ancestor.rank_level || 0;
+            parentId = ancestorId;
+          }
+        });
+
+        if (parentId && childrenMap.has(parentId)) {
+          childrenMap.get(parentId).push(taxon);
+        } else {
+          // If no parent found in the map, attach to Life
+          childrenMap.get(lifeTaxon.id).push(taxon);
+        }
+      } else if (taxon.id !== lifeTaxon.id) {
+        // If no ancestors, attach directly to Life
+        childrenMap.get(lifeTaxon.id).push(taxon);
+      }
+    });
+
+    // Helper function to count cumulative IDs for a taxon
+    function countCumulativeIds(taxon) {
+      return identifications.filter(id => {
+        if (!id.taxon) return false;
+        return id.taxon.id === taxon.id ||
+               (id.taxon.ancestor_ids && id.taxon.ancestor_ids.includes(taxon.id));
+      }).length;
+    }
+
+    // Flatten the tree in depth-first order (visiting all descendants before siblings)
+    const allTaxaWithLife = [];
+    function addTaxonAndDescendants(taxon) {
+      allTaxaWithLife.push(taxon);
+      const children = childrenMap.get(taxon.id) || [];
+      // Sort children by:
+      // 1. rank_level descending (coarser/broader first)
+      // 2. cumulative ID count descending (more IDs first)
+      // 3. name alphabetically for stability
+      children.sort((a, b) => {
+        const rankDiff = (b.rank_level || 0) - (a.rank_level || 0);
+        if (rankDiff !== 0) return rankDiff;
+
+        const countDiff = countCumulativeIds(b) - countCumulativeIds(a);
+        if (countDiff !== 0) return countDiff;
+
+        return (a.name || '').localeCompare(b.name || '');
+      });
+      // Process each child completely (including all its descendants) before moving to next sibling
+      children.forEach(child => addTaxonAndDescendants(child));
+    }
+    addTaxonAndDescendants(lifeTaxon);
+
+    const results = allTaxaWithLife.map(taxon => {
+      const idsForThisTaxon = identifications.filter(id => id.taxon?.id === taxon.id);
+      const cumulativeIds = identifications.filter(id => {
+        if (!id.taxon) return false;
+        return id.taxon.id === taxon.id ||
+               (id.taxon.ancestor_ids && id.taxon.ancestor_ids.includes(taxon.id));
+      });
+
+      // A disagreement is when the ID's taxon is NOT in the ancestry of this taxon AND
+      // this taxon is NOT in the ancestry of the ID's taxon (i.e., they're in different branches)
+      const disagreements = identifications.filter(id => {
+        if (!id.taxon) return false;
+
+        // If the ID's taxon matches this taxon, it agrees
+        if (id.taxon.id === taxon.id) {
+          return false;
+        }
+
+        // If the ID's taxon has this taxon in its ancestry (ID is more specific), it agrees
+        if (id.taxon.ancestor_ids && id.taxon.ancestor_ids.includes(taxon.id)) {
+          return false;
+        }
+
+        // If this taxon has the ID's taxon in its ancestry (ID is coarser/broader), it agrees
+        if (taxon.ancestor_ids && taxon.ancestor_ids.includes(id.taxon.id)) {
+          return false;
+        }
+
+        // Only count as disagreement if they're in completely different branches
+        return true;
+      });
+
+      // Ancestor disagreements: IDs marked as disagreements that are ancestors of this taxon
+      // These are IDs where disagreement=true AND the ID's taxon is an ancestor of this taxon
+      // (but NOT the taxon itself - only apply to downstream/more specific taxa)
+      const ancestorDisagreements = identifications.filter(id => {
+        if (!id.taxon || !id.disagreement) return false;
+        // Check if the ID's taxon is an ancestor of this taxon (not the same taxon)
+        return id.taxon.id !== taxon.id && taxon.ancestor_ids && taxon.ancestor_ids.includes(id.taxon.id);
+      });
+
+      const score = cumulativeIds.length / (cumulativeIds.length + disagreements.length + ancestorDisagreements.length);
+
+      return {
+        taxon,
+        identificationCount: idsForThisTaxon.length,
+        cumulativeCount: cumulativeIds.length,
+        disagreementCount: disagreements.length,
+        ancestorDisagreements: ancestorDisagreements.length,
+        score,
+        totalIds: identifications.length
+      };
+    });
+
+    // Find the finest taxon with score > 2/3 AND cumulative count >= 2
+    // This ensures we only highlight taxa with at least 2 cumulative IDs
+    let finestQualifyingIndex = -1;
+    if (identifications.length >= 2) {
+      for (let i = results.length - 1; i >= 0; i--) {
+        if (results[i].score > 2/3 && results[i].cumulativeCount >= 2) {
+          finestQualifyingIndex = i;
+          break;
+        }
+      }
+    }
+
+    // Mark the finest qualifying row
+    return results.map((row, index) => ({
+      ...row,
+      isCommunityTaxon: index === finestQualifyingIndex
+    }));
   }
 </script>
 
@@ -215,21 +591,60 @@
               <span class="user-login">{observation.user.login}</span>
             </div>
           </div>
+          <div class="community-taxon-section">
+            <div class="community-taxon-label">
+              <strong>Community Taxon:</strong>
+              <button
+                class="whats-this-link"
+                class:disabled={allIdentifications.length < 2}
+                on:click={() => { if (allIdentifications.length >= 2) showAlgorithmModal = true; }}
+              >
+                what's this?
+              </button>
+            </div>
+            <div class="community-taxon-box">
+              {#if communityTaxon}
+                <div class="community-taxon-info">
+                  {#if communityTaxon.default_photo?.medium_url}
+                    <img
+                      src={communityTaxon.default_photo.medium_url}
+                      alt={communityTaxon.name}
+                      class="community-taxon-icon"
+                    />
+                  {/if}
+                  <span class="community-taxon-name">
+                    {communityTaxon.preferred_common_name
+                      ? `${communityTaxon.preferred_common_name} (${communityTaxon.name})`
+                      : communityTaxon.name}
+                  </span>
+                </div>
+                <div class="cumulative-ids">
+                  {#if communityTaxonStats}
+                    Cumulative IDs: {communityTaxonStats.cumulativeCount} of {communityTaxonStats.cumulativeCount + communityTaxonStats.disagreementCount + communityTaxonStats.ancestorDisagreements}
+                  {/if}
+                </div>
+              {:else}
+                <div class="community-taxon-message">
+                  The Community ID requires at least two identifications.
+                </div>
+              {/if}
+            </div>
+          </div>
         </div>
       </div>
 
-      {#if getSortedIdentifications(observation).length > 0 || demoIdentifications.length > 0}
-        <div class="identifications-section">
-          <h3>Identification activity</h3>
-          {#each getAllIdentifications(observation) as identification}
+      <div class="identifications-section">
+        <h3>Identification activity</h3>
+        {#if allIdentifications.length > 0}
+          {#each allIdentifications as identification}
             <div class="identification-item {identification.current === false ? 'withdrawn' : ''}">
               <div class="id-user">
                 {#if identification.user.icon}
                   <img src={identification.user.icon} alt={identification.user.login} class="user-icon" />
                 {:else}
-                  {#if identification.user.login === 'demo_user'}
+                  {#if identification.user.emoji}
                     <div class="user-icon-placeholder smiley">
-                      😊
+                      {identification.user.emoji}
                     </div>
                   {:else}
                     <div class="user-icon-placeholder">
@@ -252,54 +667,136 @@
                   {/if}
                 </div>
               </div>
-              {#if identification.user.login === 'demo_user' && identification.id}
+              {#if identification.id && typeof identification.id === 'string' && identification.id.startsWith('demo-')}
                 <button class="remove-id-btn" on:click={() => removeDemoIdentification(identification.id)}>
                   ×
                 </button>
               {/if}
             </div>
           {/each}
+        {/if}
 
-          {#if demoIdentifications.length === 0}
-          <div class="add-id-form">
-            <h4>Add your identification</h4>
-            <div class="taxon-search">
-              <input
-                type="text"
-                bind:value={taxonSearchQuery}
-                on:input={searchTaxa}
-                placeholder="Search for a taxon..."
-                class="taxon-input"
-              />
-              {#if showTaxonDropdown && taxonSearchResults.length > 0}
-                <div class="taxon-dropdown">
-                  {#each taxonSearchResults as taxon}
-                    <div class="taxon-result" on:click={() => selectTaxon(taxon)}>
-                      {#if taxon.default_photo?.square_url}
-                        <img src={taxon.default_photo.square_url} alt={taxon.name} class="taxon-result-photo" />
-                      {/if}
-                      <div class="taxon-result-info">
-                        <div class="taxon-result-name">
-                          {taxon.preferred_common_name ? `${taxon.preferred_common_name} (${taxon.name})` : taxon.name}
-                        </div>
+        <div class="add-id-form">
+          <h4>Add your identification</h4>
+          <div class="taxon-search">
+            <input
+              type="text"
+              bind:value={taxonSearchQuery}
+              on:input={searchTaxa}
+              placeholder="Search for a taxon..."
+              class="taxon-input"
+            />
+            {#if showTaxonDropdown && taxonSearchResults.length > 0}
+              <div class="taxon-dropdown">
+                {#each taxonSearchResults as taxon}
+                  <div class="taxon-result" on:click={() => selectTaxon(taxon)}>
+                    {#if taxon.default_photo?.square_url}
+                      <img src={taxon.default_photo.square_url} alt={taxon.name} class="taxon-result-photo" />
+                    {/if}
+                    <div class="taxon-result-info">
+                      <div class="taxon-result-name">
+                        {taxon.preferred_common_name ? `${taxon.preferred_common_name} (${taxon.name})` : taxon.name}
                       </div>
                     </div>
-                  {/each}
-                </div>
-              {/if}
-            </div>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+          <button
+            type="button"
+            class="submit-id-btn"
+            on:click={submitIdentification}
+            disabled={!selectedTaxon}
+          >
+            Add Identification
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  {#if showAlgorithmModal && observation}
+    <div class="modal-overlay" on:click={() => showAlgorithmModal = false}>
+      <div class="modal-content" on:click|stopPropagation>
+        <div class="modal-header">
+          <h2>Algorithm Summary</h2>
+          <button class="modal-close" on:click={() => showAlgorithmModal = false}>×</button>
+        </div>
+        <div class="modal-body">
+          <table class="algorithm-table">
+            <thead>
+              <tr>
+                <th>Taxon</th>
+                <th>Identification Count</th>
+                <th>Cumulative Count</th>
+                <th>Disagreement Count</th>
+                <th>Ancestor Disagreements</th>
+                <th>Score</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each algorithmSummary as row}
+                <tr class:community-taxon-row={row.isCommunityTaxon}>
+                  <td>
+                    {#if row.taxon.preferred_common_name}
+                      {row.taxon.preferred_common_name} {row.taxon.rank} {row.taxon.name}
+                    {:else}
+                      {row.taxon.rank} {row.taxon.name}
+                    {/if}
+                  </td>
+                  <td>{row.identificationCount}</td>
+                  <td>{row.cumulativeCount}</td>
+                  <td>{row.disagreementCount}</td>
+                  <td>{row.ancestorDisagreements}</td>
+                  <td>
+                    {row.cumulativeCount} / ({row.cumulativeCount}+{row.disagreementCount}+{row.ancestorDisagreements}={row.cumulativeCount + row.disagreementCount + row.ancestorDisagreements}) = {row.score.toFixed(2)}
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  {#if showDisagreementModal && pendingIdentification && observation && observation.taxon}
+    <div class="modal-overlay" on:click={() => { showDisagreementModal = false; pendingIdentification = null; }}>
+      <div class="modal-content disagreement-modal" on:click|stopPropagation>
+        <div class="modal-header">
+          <h2>Potential Disagreement</h2>
+          <button class="modal-close" on:click={() => { showDisagreementModal = false; pendingIdentification = null; }}>×</button>
+        </div>
+        <div class="modal-body">
+          <p class="disagreement-question">
+            Is the evidence provided enough to confirm this is
+            {observation.taxon.preferred_common_name
+              ? `${observation.taxon.preferred_common_name} (${observation.taxon.rank} ${observation.taxon.name})`
+              : `${observation.taxon.rank} ${observation.taxon.name}`}?
+          </p>
+          <div class="disagreement-options">
             <button
-              type="button"
-              class="submit-id-btn"
-              on:click={submitIdentification}
-              disabled={!selectedTaxon}
+              class="disagreement-btn btn-yes"
+              on:click={() => handleDisagreementChoice(false)}
             >
-              Add Identification
+              I don't know but I am sure this is
+              {pendingIdentification.taxon.preferred_common_name
+                ? `${pendingIdentification.taxon.preferred_common_name} (${pendingIdentification.taxon.rank} ${pendingIdentification.taxon.name})`
+                : `${pendingIdentification.taxon.rank} ${pendingIdentification.taxon.name}`}
+            </button>
+            <button
+              class="disagreement-btn btn-no"
+              on:click={() => handleDisagreementChoice(true)}
+            >
+              No but it is a member of
+              {pendingIdentification.taxon.preferred_common_name
+                ? `${pendingIdentification.taxon.preferred_common_name} (${pendingIdentification.taxon.rank} ${pendingIdentification.taxon.name})`
+                : `${pendingIdentification.taxon.rank} ${pendingIdentification.taxon.name}`}
             </button>
           </div>
-          {/if}
         </div>
-      {/if}
+      </div>
     </div>
   {/if}
 </main>
@@ -510,6 +1007,89 @@
     font-weight: 500;
   }
 
+  .community-taxon-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .community-taxon-label {
+    text-align: left;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .community-taxon-label strong {
+    color: #555;
+  }
+
+  .whats-this-link {
+    background: none;
+    border: none;
+    color: #74ac00;
+    text-decoration: underline;
+    cursor: pointer;
+    font-size: 0.85rem;
+    padding: 0;
+    width: auto;
+  }
+
+  .whats-this-link:hover {
+    color: #5d8800;
+    background: none;
+  }
+
+  .whats-this-link.disabled {
+    color: #999;
+    cursor: default;
+    text-decoration: none;
+  }
+
+  .whats-this-link.disabled:hover {
+    color: #999;
+  }
+
+  .community-taxon-box {
+    background-color: white;
+    padding: 0.75rem;
+    border-radius: 4px;
+    border: 1px solid #e0e0e0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    min-width: 414px;
+  }
+
+  .community-taxon-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .community-taxon-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 4px;
+    object-fit: cover;
+  }
+
+  .community-taxon-name {
+    font-weight: 500;
+  }
+
+  .cumulative-ids {
+    font-size: 0.9rem;
+    color: #666;
+    padding-top: 0.25rem;
+  }
+
+  .community-taxon-message {
+    font-size: 0.95rem;
+    color: #666;
+    font-style: italic;
+  }
+
   .identifications-section {
     margin-top: 1.5rem;
     padding-top: 1rem;
@@ -705,5 +1285,138 @@
   .submit-id-btn:disabled {
     background-color: #ccc;
     cursor: not-allowed;
+  }
+
+  .modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+  }
+
+  .modal-content {
+    background: white;
+    border-radius: 8px;
+    max-width: 90%;
+    max-height: 90vh;
+    overflow: auto;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  }
+
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1.5rem;
+    border-bottom: 1px solid #ddd;
+  }
+
+  .modal-header h2 {
+    margin: 0;
+    font-size: 1.5rem;
+  }
+
+  .modal-close {
+    background: none;
+    border: none;
+    font-size: 2rem;
+    line-height: 1;
+    cursor: pointer;
+    color: #999;
+    padding: 0;
+    width: auto;
+  }
+
+  .modal-close:hover {
+    color: #c00;
+    background: none;
+  }
+
+  .modal-body {
+    padding: 1.5rem;
+    overflow-x: auto;
+  }
+
+  .algorithm-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+  }
+
+  .algorithm-table th,
+  .algorithm-table td {
+    padding: 0.5rem;
+    text-align: left;
+    border: 1px solid #ddd;
+  }
+
+  .algorithm-table th {
+    background-color: #f5f5f5;
+    font-weight: 600;
+  }
+
+  .algorithm-table tbody tr:hover {
+    background-color: #f9f9f9;
+  }
+
+  .algorithm-table tbody tr.community-taxon-row {
+    background-color: #d4edda;
+    font-weight: 600;
+  }
+
+  .algorithm-table tbody tr.community-taxon-row:hover {
+    background-color: #c3e6cb;
+  }
+
+  .disagreement-modal .modal-content {
+    max-width: 600px;
+  }
+
+  .disagreement-question {
+    font-size: 1.1rem;
+    font-weight: 500;
+    margin-bottom: 1.5rem;
+    color: #333;
+  }
+
+  .disagreement-options {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .disagreement-btn {
+    padding: 1rem;
+    font-size: 1rem;
+    text-align: left;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+    width: 100%;
+    font-weight: 500;
+  }
+
+  .disagreement-btn.btn-yes {
+    background-color: #74ac00;
+  }
+
+  .disagreement-btn.btn-yes:hover {
+    background-color: #5d8800;
+  }
+
+  .disagreement-btn.btn-no {
+    background-color: #ff9800;
+  }
+
+  .disagreement-btn.btn-no:hover {
+    background-color: #f57c00;
   }
 </style>
