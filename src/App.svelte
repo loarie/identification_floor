@@ -16,6 +16,7 @@
   let needsIdVotesModalType: 'yes' | 'no' | null = null;
   let demoVoteCounter = 0;
   let demoVotes: any[] = [];
+  let mode: 'current' | 'alternative' = 'current';
 
   const emojis = ['😊', '🙂', '😎', '🤓', '😀', '🤗', '😃', '😄', '🙃', '😁', '😺', '🐱', '🦊', '🐶', '🐼', '🐨', '🦁', '🐯', '🐸', '🐝'];
 
@@ -406,8 +407,8 @@
 
   // Update observation taxon and quality grade when identifications or votes change
   // This needs to run even when there are 0 identifications (e.g., when all are removed)
-  // Explicitly depend on allIdentifications, communityTaxon, userOptedOutOfCommunityTaxon, yesVotes, and noVotes to ensure reactivity
-  $: if (observation && allIdentifications !== undefined && communityTaxon !== undefined && userOptedOutOfCommunityTaxon !== undefined && yesVotes !== undefined && noVotes !== undefined) {
+  // Explicitly depend on allIdentifications, communityTaxon, userOptedOutOfCommunityTaxon, yesVotes, noVotes, and mode to ensure reactivity
+  $: if (observation && allIdentifications !== undefined && communityTaxon !== undefined && userOptedOutOfCommunityTaxon !== undefined && yesVotes !== undefined && noVotes !== undefined && mode !== undefined) {
     updateObservationTaxon();
     updateObservationQualityGrade();
   }
@@ -440,7 +441,19 @@
 
     // If there's only one identification, set observation taxon to that identification's taxon
     if (currentIdentifications.length === 1) {
-      observation.taxon = currentIdentifications[0].taxon;
+      // Alternative mode: if only ID is finer than species, use species ancestor instead
+      if (mode === 'alternative') {
+        const singleIdTaxon = currentIdentifications[0].taxon;
+        if (singleIdTaxon && singleIdTaxon.rank_level && singleIdTaxon.rank_level < 10) {
+          // Find species ancestor (rank_level = 10)
+          const speciesAncestor = singleIdTaxon.ancestors?.find(a => a.rank_level === 10);
+          observation.taxon = speciesAncestor || singleIdTaxon;
+        } else {
+          observation.taxon = singleIdTaxon;
+        }
+      } else {
+        observation.taxon = currentIdentifications[0].taxon;
+      }
       return;
     }
 
@@ -470,60 +483,76 @@
 
             const probTaxon = finestDownstream.taxon;
 
-            // Edge case: if prob_taxon is finer than species (rank_level < 10) and is a descendant of community taxon
-            if (probTaxon && probTaxon.rank_level && probTaxon.rank_level < 10 &&
-                probTaxon.ancestor_ids && probTaxon.ancestor_ids.includes(communityTaxon.id)) {
-
-              // Find the first ID of prob_taxon (sorted by created_at, then by id for demo IDs)
-              const probTaxonIds = currentIdentifications.filter(id => id.taxon?.id === probTaxon.id)
-                .sort((a, b) => {
-                  const timeA = new Date(a.created_at).getTime();
-                  const timeB = new Date(b.created_at).getTime();
-                  if (timeA !== timeB) return timeA - timeB;
-                  // For demo IDs with same timestamp, compare ID strings
-                  return (a.id || '').localeCompare(b.id || '');
-                });
-              const firstIdOfProbTaxon = probTaxonIds[0];
-
-              // Find the first ID of community taxon
-              const communityTaxonIds = currentIdentifications.filter(id => id.taxon?.id === communityTaxon.id)
-                .sort((a, b) => {
-                  const timeA = new Date(a.created_at).getTime();
-                  const timeB = new Date(b.created_at).getTime();
-                  if (timeA !== timeB) return timeA - timeB;
-                  return (a.id || '').localeCompare(b.id || '');
-                });
-              const firstIdOfCommunityTaxon = communityTaxonIds[0];
-
-              if (firstIdOfProbTaxon && firstIdOfCommunityTaxon) {
-                // Compare which came first
-                const probTaxonTime = new Date(firstIdOfProbTaxon.created_at).getTime();
-                const communityTaxonTime = new Date(firstIdOfCommunityTaxon.created_at).getTime();
-
-                if (probTaxonTime < communityTaxonTime) {
-                  // prob_taxon was subspecific but first - use it
-                  observation.taxon = probTaxon;
-                } else if (probTaxonTime > communityTaxonTime) {
-                  // prob_taxon was added later - find its species ancestor
-                  // Species rank level is 10
-                  const speciesAncestor = probTaxon.ancestors?.find(a => a.rank_level === 10);
-                  if (speciesAncestor) {
-                    observation.taxon = speciesAncestor;
-                  } else {
-                    // No species ancestor found, use community taxon
-                    observation.taxon = communityTaxon;
-                  }
-                } else {
-                  // Same timestamp, use community taxon
-                  observation.taxon = communityTaxon;
-                }
+            // Alternative mode: observation.taxon can only be finer than species if community taxon is finer than species
+            if (mode === 'alternative') {
+              // If prob_taxon is finer than species (infraspecies) but community taxon is not
+              if (probTaxon && probTaxon.rank_level && probTaxon.rank_level < 10 &&
+                  communityTaxon.rank_level && communityTaxon.rank_level >= 10) {
+                // Community taxon is at species or coarser - observation bottoms out at species level
+                // Find species ancestor of prob_taxon
+                const speciesAncestor = probTaxon.ancestors?.find(a => a.rank_level === 10);
+                observation.taxon = speciesAncestor || communityTaxon;
               } else {
-                // Couldn't determine order, use prob_taxon as default
+                // Community taxon is already infraspecies, or prob_taxon is not infraspecies - use prob_taxon
                 observation.taxon = probTaxon;
               }
             } else {
-              // Normal case: use the finest downstream taxon
-              observation.taxon = probTaxon;
+              // Current mode: Edge case handling for infraspecies
+              // If prob_taxon is finer than species (rank_level < 10) and is a descendant of community taxon
+              if (probTaxon && probTaxon.rank_level && probTaxon.rank_level < 10 &&
+                  probTaxon.ancestor_ids && probTaxon.ancestor_ids.includes(communityTaxon.id)) {
+
+                // Find the first ID of prob_taxon (sorted by created_at, then by id for demo IDs)
+                const probTaxonIds = currentIdentifications.filter(id => id.taxon?.id === probTaxon.id)
+                  .sort((a, b) => {
+                    const timeA = new Date(a.created_at).getTime();
+                    const timeB = new Date(b.created_at).getTime();
+                    if (timeA !== timeB) return timeA - timeB;
+                    // For demo IDs with same timestamp, compare ID strings
+                    return (a.id || '').localeCompare(b.id || '');
+                  });
+                const firstIdOfProbTaxon = probTaxonIds[0];
+
+                // Find the first ID of community taxon
+                const communityTaxonIds = currentIdentifications.filter(id => id.taxon?.id === communityTaxon.id)
+                  .sort((a, b) => {
+                    const timeA = new Date(a.created_at).getTime();
+                    const timeB = new Date(b.created_at).getTime();
+                    if (timeA !== timeB) return timeA - timeB;
+                    return (a.id || '').localeCompare(b.id || '');
+                  });
+                const firstIdOfCommunityTaxon = communityTaxonIds[0];
+
+                if (firstIdOfProbTaxon && firstIdOfCommunityTaxon) {
+                  // Compare which came first
+                  const probTaxonTime = new Date(firstIdOfProbTaxon.created_at).getTime();
+                  const communityTaxonTime = new Date(firstIdOfCommunityTaxon.created_at).getTime();
+
+                  if (probTaxonTime < communityTaxonTime) {
+                    // prob_taxon was subspecific but first - use it
+                    observation.taxon = probTaxon;
+                  } else if (probTaxonTime > communityTaxonTime) {
+                    // prob_taxon was added later - find its species ancestor
+                    // Species rank level is 10
+                    const speciesAncestor = probTaxon.ancestors?.find(a => a.rank_level === 10);
+                    if (speciesAncestor) {
+                      observation.taxon = speciesAncestor;
+                    } else {
+                      // No species ancestor found, use community taxon
+                      observation.taxon = communityTaxon;
+                    }
+                  } else {
+                    // Same timestamp, use community taxon
+                    observation.taxon = communityTaxon;
+                  }
+                } else {
+                  // Couldn't determine order, use prob_taxon as default
+                  observation.taxon = probTaxon;
+                }
+              } else {
+                // Normal case: use the finest downstream taxon
+                observation.taxon = probTaxon;
+              }
             }
             return;
           }
@@ -797,7 +826,24 @@
 <main>
   <div class="header-container">
     <h1>iNaturalist identification floor demo</h1>
+    <div class="mode-toggle">
+      <span class="mode-label">Mode:</span>
+      <label class="mode-option">
+        <input type="radio" name="mode" value="current" bind:group={mode} />
+        <span>Current</span>
+      </label>
+      <label class="mode-option">
+        <input type="radio" name="mode" value="alternative" bind:group={mode} />
+        <span>Alternative</span>
+      </label>
+    </div>
   </div>
+
+  {#if mode === 'alternative'}
+    <div class="alternative-explanation">
+      This simulates a proposed alternative for handling infraspecies on iNaturalist, where observations do not advance to infraspecies until the community taxon itself reaches the infraspecies rank.
+    </div>
+  {/if}
 
   <form on:submit={handleSubmit}>
     <div class="input-group">
@@ -1174,12 +1220,63 @@
     z-index: 1000;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
     width: 100%;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
   }
 
   h1 {
     color: #333;
     font-size: 1.2rem;
     margin: 0;
+    flex-shrink: 1;
+    min-width: 0;
+  }
+
+  .mode-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .mode-label {
+    font-size: 0.9rem;
+    color: #555;
+    font-weight: 500;
+  }
+
+  .mode-option {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: #555;
+  }
+
+  .mode-option input[type="radio"] {
+    width: auto;
+    margin: 0;
+    cursor: pointer;
+  }
+
+  .mode-option span {
+    cursor: pointer;
+  }
+
+  .alternative-explanation {
+    background-color: #e3f2fd;
+    border: 1px solid #90caf9;
+    border-radius: 4px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    color: #1565c0;
+    font-size: 0.95rem;
+    line-height: 1.5;
   }
 
   h2 {
