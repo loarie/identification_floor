@@ -256,10 +256,19 @@
   $: communityTaxon = algorithmSummary.find(row => row.isCommunityTaxon)?.taxon || null;
   $: communityTaxonStats = algorithmSummary.find(row => row.isCommunityTaxon) || null;
 
+  // Check if user has opted out of community taxon
+  // (user.preferences.prefers_community_taxa = false AND preferences.prefers_community_taxon != true)
+  // OR preferences.prefers_community_taxon = false
+  $: userOptedOutOfCommunityTaxon = observation ? (
+    (observation.user?.preferences?.prefers_community_taxa === false &&
+     observation.user?.preferences?.prefers_community_taxon !== true) ||
+    observation.user?.preferences?.prefers_community_taxon === false
+  ) : false;
+
   // Update observation taxon and quality grade when identifications change
   // This needs to run even when there are 0 identifications (e.g., when all are removed)
-  // Explicitly depend on allIdentifications and communityTaxon to ensure reactivity
-  $: if (observation && allIdentifications !== undefined && communityTaxon !== undefined) {
+  // Explicitly depend on allIdentifications, communityTaxon, and userOptedOutOfCommunityTaxon to ensure reactivity
+  $: if (observation && allIdentifications !== undefined && communityTaxon !== undefined && userOptedOutOfCommunityTaxon !== undefined) {
     updateObservationTaxon();
     updateObservationQualityGrade();
   }
@@ -268,6 +277,21 @@
     if (!observation) return;
 
     const currentIdentifications = getAllIdentifications(observation).filter(id => id.current !== false);
+
+    // If user has opted out of community taxon, use only the observer's identification
+    if (userOptedOutOfCommunityTaxon) {
+      // Find the observer's current identification
+      const observerIdentification = currentIdentifications.find(
+        id => id.user.login === observation.user.login || id.user.id === observation.user.id
+      );
+
+      if (observerIdentification) {
+        observation.taxon = observerIdentification.taxon;
+      } else {
+        observation.taxon = null;
+      }
+      return;
+    }
 
     // If there are no identifications (all removed), set taxon to null
     if (currentIdentifications.length === 0) {
@@ -329,6 +353,32 @@
 
   function updateObservationQualityGrade() {
     if (!observation) return;
+
+    // If user has opted out of community taxon AND has an observation taxon
+    if (userOptedOutOfCommunityTaxon && observation.taxon) {
+      // If observation taxon is coarser than species (rank_level > 10), set to needs_id
+      if (observation.taxon.rank_level && observation.taxon.rank_level > 10) {
+        observation.quality_grade = 'needs_id';
+        return;
+      }
+
+      // If there's a community taxon, check if observation taxon is a sibling
+      if (communityTaxon) {
+        // Check if taxa are siblings (different branches - not equal, ancestor, or descendant)
+        const taxaAreEqual = observation.taxon.id === communityTaxon.id;
+        const observationIsAncestor = communityTaxon.ancestor_ids &&
+          communityTaxon.ancestor_ids.includes(observation.taxon.id);
+        const observationIsDescendant = observation.taxon.ancestor_ids &&
+          observation.taxon.ancestor_ids.includes(communityTaxon.id);
+
+        const taxaAreSiblings = !taxaAreEqual && !observationIsAncestor && !observationIsDescendant;
+
+        if (taxaAreSiblings) {
+          observation.quality_grade = 'casual';
+          return;
+        }
+      }
+    }
 
     // If there's a community taxon, check its rank
     if (communityTaxon) {
@@ -602,6 +652,11 @@
                 what's this?
               </button>
             </div>
+            {#if userOptedOutOfCommunityTaxon}
+              <div class="user-opted-out-message">
+                User has opted-out of Community Taxon
+              </div>
+            {/if}
             <div class="community-taxon-box">
               {#if communityTaxon}
                 <div class="community-taxon-info">
@@ -1088,6 +1143,16 @@
     font-size: 0.95rem;
     color: #666;
     font-style: italic;
+  }
+
+  .user-opted-out-message {
+    font-size: 0.9rem;
+    color: #ff9800;
+    font-style: italic;
+    padding: 0.5rem;
+    background-color: #fff3e0;
+    border-radius: 4px;
+    border: 1px solid #ffe0b2;
   }
 
   .identifications-section {
