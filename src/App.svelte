@@ -39,6 +39,93 @@
     demoVoteCounter = 0;
 
     try {
+      // Handle special case for observation ID 0 - create a simulated unknown observation
+      if (observationId === '0') {
+        observation = {
+          id: 0,
+          uuid: '00000000-0000-0000-0000-000000000000',
+          species_guess: null,
+          taxon: null,
+          quality_grade: 'needs_id',
+          identifications: [],
+          votes: [],
+          observed_on: '2026-01-01',
+          observed_on_details: {
+            year: 2026,
+            month: 1,
+            day: 1
+          },
+          time_observed_at: null,
+          observed_time_zone: null,
+          created_at: new Date().toISOString(),
+          created_at_details: {
+            year: new Date().getFullYear(),
+            month: new Date().getMonth() + 1,
+            day: new Date().getDate()
+          },
+          created_time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          user: {
+            id: 0,
+            login: 'Person0',
+            icon: null,
+            emoji: getRandomEmoji(),
+            preferences: {
+              prefers_community_taxa: true
+            }
+          },
+          observation_photos: [],
+          sounds: [],
+          obscured: false,
+          private_geojson: null
+        };
+        loading = false;
+        return;
+      }
+
+      // Handle special case for observation ID -1 - create a simulated unknown observation with opted-out user
+      if (observationId === '-1') {
+        observation = {
+          id: -1,
+          uuid: '00000000-0000-0000-0000-000000000001',
+          species_guess: null,
+          taxon: null,
+          quality_grade: 'needs_id',
+          identifications: [],
+          votes: [],
+          observed_on: '2026-01-01',
+          observed_on_details: {
+            year: 2026,
+            month: 1,
+            day: 1
+          },
+          time_observed_at: null,
+          observed_time_zone: null,
+          created_at: new Date().toISOString(),
+          created_at_details: {
+            year: new Date().getFullYear(),
+            month: new Date().getMonth() + 1,
+            day: new Date().getDate()
+          },
+          created_time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          user: {
+            id: -1,
+            login: 'Person0',
+            icon: null,
+            emoji: getRandomEmoji(),
+            preferences: {
+              prefers_community_taxa: false,
+              prefers_community_taxon: false
+            }
+          },
+          observation_photos: [],
+          sounds: [],
+          obscured: false,
+          private_geojson: null
+        };
+        loading = false;
+        return;
+      }
+
       const response = await fetch(`https://api.inaturalist.org/v1/observations/${observationId}`);
 
       if (!response.ok) {
@@ -380,7 +467,64 @@
               const currentRank = current.taxon?.rank_level || Infinity;
               return currentRank < finestRank ? current : finest;
             });
-            observation.taxon = finestDownstream.taxon;
+
+            const probTaxon = finestDownstream.taxon;
+
+            // Edge case: if prob_taxon is finer than species (rank_level < 10) and is a descendant of community taxon
+            if (probTaxon && probTaxon.rank_level && probTaxon.rank_level < 10 &&
+                probTaxon.ancestor_ids && probTaxon.ancestor_ids.includes(communityTaxon.id)) {
+
+              // Find the first ID of prob_taxon (sorted by created_at, then by id for demo IDs)
+              const probTaxonIds = currentIdentifications.filter(id => id.taxon?.id === probTaxon.id)
+                .sort((a, b) => {
+                  const timeA = new Date(a.created_at).getTime();
+                  const timeB = new Date(b.created_at).getTime();
+                  if (timeA !== timeB) return timeA - timeB;
+                  // For demo IDs with same timestamp, compare ID strings
+                  return (a.id || '').localeCompare(b.id || '');
+                });
+              const firstIdOfProbTaxon = probTaxonIds[0];
+
+              // Find the first ID of community taxon
+              const communityTaxonIds = currentIdentifications.filter(id => id.taxon?.id === communityTaxon.id)
+                .sort((a, b) => {
+                  const timeA = new Date(a.created_at).getTime();
+                  const timeB = new Date(b.created_at).getTime();
+                  if (timeA !== timeB) return timeA - timeB;
+                  return (a.id || '').localeCompare(b.id || '');
+                });
+              const firstIdOfCommunityTaxon = communityTaxonIds[0];
+
+              if (firstIdOfProbTaxon && firstIdOfCommunityTaxon) {
+                // Compare which came first
+                const probTaxonTime = new Date(firstIdOfProbTaxon.created_at).getTime();
+                const communityTaxonTime = new Date(firstIdOfCommunityTaxon.created_at).getTime();
+
+                if (probTaxonTime < communityTaxonTime) {
+                  // prob_taxon was subspecific but first - use it
+                  observation.taxon = probTaxon;
+                } else if (probTaxonTime > communityTaxonTime) {
+                  // prob_taxon was added later - find its species ancestor
+                  // Species rank level is 10
+                  const speciesAncestor = probTaxon.ancestors?.find(a => a.rank_level === 10);
+                  if (speciesAncestor) {
+                    observation.taxon = speciesAncestor;
+                  } else {
+                    // No species ancestor found, use community taxon
+                    observation.taxon = communityTaxon;
+                  }
+                } else {
+                  // Same timestamp, use community taxon
+                  observation.taxon = communityTaxon;
+                }
+              } else {
+                // Couldn't determine order, use prob_taxon as default
+                observation.taxon = probTaxon;
+              }
+            } else {
+              // Normal case: use the finest downstream taxon
+              observation.taxon = probTaxon;
+            }
             return;
           }
         }
@@ -661,7 +805,7 @@
         id="obs-id"
         type="text"
         bind:value={observationId}
-        placeholder="Enter an iNaturalist Observation ID, e.g., 331799949"
+        placeholder="Enter an Obs ID, e.g., 63, or 0 for an unknown observation, or -1 for an unknown opt-out"
       />
       <button type="submit" disabled={loading}>
         {loading ? 'Loading...' : 'Fetch Observation'}
@@ -700,9 +844,15 @@
               {#if observation.user.icon}
                 <img src={observation.user.icon} alt={observation.user.login} class="user-icon" />
               {:else}
-                <div class="user-icon-placeholder">
-                  {observation.user.login.charAt(0).toUpperCase()}
-                </div>
+                {#if observation.user.emoji}
+                  <div class="user-icon-placeholder smiley">
+                    {observation.user.emoji}
+                  </div>
+                {:else}
+                  <div class="user-icon-placeholder">
+                    {observation.user.login.charAt(0).toUpperCase()}
+                  </div>
+                {/if}
               {/if}
               <span class="user-login">{observation.user.login}</span>
             </div>
