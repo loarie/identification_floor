@@ -12,6 +12,10 @@
   let demoIdCounter = 0;
   let showDisagreementModal = false;
   let pendingIdentification: any = null;
+  let showNeedsIdVotesModal = false;
+  let needsIdVotesModalType: 'yes' | 'no' | null = null;
+  let demoVoteCounter = 0;
+  let demoVotes: any[] = [];
 
   const emojis = ['😊', '🙂', '😎', '🤓', '😀', '🤗', '😃', '😄', '🙃', '😁', '😺', '🐱', '🦊', '🐶', '🐼', '🐨', '🦁', '🐯', '🐸', '🐝'];
 
@@ -28,9 +32,11 @@
     loading = true;
     error = '';
     observation = null;
-    // Clear demo identifications when loading a new observation
+    // Clear demo identifications and votes when loading a new observation
     demoIdentifications = [];
     demoIdCounter = 0;
+    demoVotes = [];
+    demoVoteCounter = 0;
 
     try {
       const response = await fetch(`https://api.inaturalist.org/v1/observations/${observationId}`);
@@ -265,10 +271,56 @@
     observation.user?.preferences?.prefers_community_taxon === false
   ) : false;
 
-  // Update observation taxon and quality grade when identifications change
+  // Reactive computation for needs_id votes (combining observation votes and demo votes)
+  $: allVotes = observation?.votes ? [...observation.votes, ...demoVotes] : [...demoVotes];
+  $: needsIdVotes = allVotes.filter(v => v.vote_scope === 'needs_id');
+  $: yesVotes = needsIdVotes.filter(v => v.vote_flag === true);
+  $: noVotes = needsIdVotes.filter(v => v.vote_flag === false);
+
+  // Check if votes should be disabled:
+  // Disable if there are no votes AND (no community taxon OR (community taxon doesn't match observation taxon AND user has not opted out))
+  $: votesDisabled = observation ? (
+    needsIdVotes.length === 0 && (
+      !communityTaxon ||
+      (communityTaxon && observation.taxon && communityTaxon.id !== observation.taxon.id && !userOptedOutOfCommunityTaxon)
+    )
+  ) : false;
+
+  function openVotesModal(type: 'yes' | 'no') {
+    needsIdVotesModalType = type;
+    showNeedsIdVotesModal = true;
+  }
+
+  function addVote(voteFlag: boolean) {
+    if (!observation) return;
+
+    const personLetter = String.fromCharCode(65 + demoVoteCounter); // A, B, C, etc.
+    const emoji = getRandomEmoji();
+
+    const newVote = {
+      id: `demo-vote-${Date.now()}`,
+      user: {
+        login: `User${personLetter}`,
+        icon: null,
+        emoji: emoji
+      },
+      vote_scope: 'needs_id',
+      vote_flag: voteFlag,
+      created_at: new Date().toISOString()
+    };
+
+    demoVotes = [...demoVotes, newVote];
+    demoVoteCounter++;
+  }
+
+  function removeDemoVote(voteId: string) {
+    demoVotes = demoVotes.filter(v => v.id !== voteId);
+  }
+
+  // Update observation taxon and quality grade when identifications or votes change
   // This needs to run even when there are 0 identifications (e.g., when all are removed)
-  // Explicitly depend on allIdentifications, communityTaxon, and userOptedOutOfCommunityTaxon to ensure reactivity
-  $: if (observation && allIdentifications !== undefined && communityTaxon !== undefined && userOptedOutOfCommunityTaxon !== undefined) {
+  // Explicitly depend on allIdentifications, communityTaxon, userOptedOutOfCommunityTaxon, yesVotes, and noVotes to ensure reactivity
+  $: if (observation && allIdentifications !== undefined && communityTaxon !== undefined && userOptedOutOfCommunityTaxon !== undefined && yesVotes !== undefined && noVotes !== undefined) {
     updateObservationTaxon();
     updateObservationQualityGrade();
   }
@@ -354,16 +406,15 @@
   function updateObservationQualityGrade() {
     if (!observation) return;
 
+    // First, determine the base quality grade without considering votes
+
     // If user has opted out of community taxon AND has an observation taxon
     if (userOptedOutOfCommunityTaxon && observation.taxon) {
       // If observation taxon is coarser than species (rank_level > 10), set to needs_id
       if (observation.taxon.rank_level && observation.taxon.rank_level > 10) {
         observation.quality_grade = 'needs_id';
-        return;
-      }
-
-      // If there's a community taxon, check if observation taxon is a sibling
-      if (communityTaxon) {
+      } else if (communityTaxon) {
+        // If there's a community taxon, check if observation taxon is a sibling
         // Check if taxa are siblings (different branches - not equal, ancestor, or descendant)
         const taxaAreEqual = observation.taxon.id === communityTaxon.id;
         const observationIsAncestor = communityTaxon.ancestor_ids &&
@@ -375,13 +426,10 @@
 
         if (taxaAreSiblings) {
           observation.quality_grade = 'casual';
-          return;
         }
       }
-    }
-
-    // If there's a community taxon, check its rank
-    if (communityTaxon) {
+    } else if (communityTaxon) {
+      // User has not opted out - use normal community taxon logic
       // Species rank level is 10, anything finer (lower number) is subspecies/variety/form
       // If community taxon is species (rank_level = 10) and observation taxon is finer (rank_level < 10),
       // then quality grade should be needs_id, not research
@@ -401,6 +449,24 @@
     } else {
       // No community taxon means needs ID
       observation.quality_grade = 'needs_id';
+    }
+
+    // Now check needs_id votes to potentially override quality grade
+    // If false votes (No) > true votes (Yes) AND quality grade is needs_id
+    if (noVotes.length > yesVotes.length && observation.quality_grade === 'needs_id') {
+      // Check if observation.taxon matches community.taxon and is finer than family
+      // Family rank_level is approximately 30, so finer means < 30
+      if (observation.taxon && communityTaxon && observation.taxon.id === communityTaxon.id) {
+        // Taxa match - check if finer than family
+        if (observation.taxon.rank_level && observation.taxon.rank_level < 30) {
+          observation.quality_grade = 'research';
+        } else {
+          observation.quality_grade = 'casual';
+        }
+      } else {
+        // Taxa don't match
+        observation.quality_grade = 'casual';
+      }
     }
   }
 
@@ -767,6 +833,51 @@
             Add Identification
           </button>
         </div>
+
+        {#if communityTaxon}
+          <div class="needs-id-votes-section" class:disabled={votesDisabled}>
+            <div class="needs-id-votes-label">
+              Based on the evidence, can the Community Taxon be improved?<br/>
+              Current Community Taxon: {communityTaxon.preferred_common_name
+                ? `${communityTaxon.preferred_common_name} (${communityTaxon.name})`
+                : communityTaxon.name}
+            </div>
+            <div class="needs-id-votes-row">
+              <div class="vote-option">
+                <button
+                  class="vote-checkmark"
+                  on:click={() => addVote(true)}
+                  title="Vote Yes"
+                  disabled={votesDisabled}
+                >✓</button>
+                <span class="vote-label">Yes</span>
+                {#if yesVotes.length > 0}
+                  <button class="vote-count" on:click={() => openVotesModal('yes')}>
+                    ({yesVotes.length})
+                  </button>
+                {:else}
+                  <span class="vote-count-zero">(0)</span>
+                {/if}
+              </div>
+              <div class="vote-option">
+                <button
+                  class="vote-checkmark"
+                  on:click={() => addVote(false)}
+                  title="Vote No"
+                  disabled={votesDisabled}
+                >✓</button>
+                <span class="vote-label">No, it's as good as it can be</span>
+                {#if noVotes.length > 0}
+                  <button class="vote-count" on:click={() => openVotesModal('no')}>
+                    ({noVotes.length})
+                  </button>
+                {:else}
+                  <span class="vote-count-zero">(0)</span>
+                {/if}
+              </div>
+            </div>
+          </div>
+        {/if}
       </div>
     </div>
   {/if}
@@ -850,6 +961,44 @@
                 : `${pendingIdentification.taxon.rank} ${pendingIdentification.taxon.name}`}
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  {#if showNeedsIdVotesModal && needsIdVotesModalType}
+    <div class="modal-overlay" on:click={() => { showNeedsIdVotesModal = false; needsIdVotesModalType = null; }}>
+      <div class="modal-content votes-modal" on:click|stopPropagation>
+        <div class="modal-header">
+          <h2>{needsIdVotesModalType === 'yes' ? 'Yes' : 'No, it\'s as good as it can be'} Votes</h2>
+          <button class="modal-close" on:click={() => { showNeedsIdVotesModal = false; needsIdVotesModalType = null; }}>×</button>
+        </div>
+        <div class="modal-body">
+          <ul class="voters-list">
+            {#each (needsIdVotesModalType === 'yes' ? yesVotes : noVotes) as vote}
+              <li class="voter-item">
+                {#if vote.user?.icon}
+                  <img src={vote.user.icon} alt={vote.user.login} class="voter-icon" />
+                {:else}
+                  {#if vote.user?.emoji}
+                    <div class="voter-icon-placeholder smiley">
+                      {vote.user.emoji}
+                    </div>
+                  {:else}
+                    <div class="voter-icon-placeholder">
+                      {vote.user?.login?.charAt(0)?.toUpperCase() || '?'}
+                    </div>
+                  {/if}
+                {/if}
+                <span class="voter-login">{vote.user?.login || 'Unknown'}</span>
+                {#if vote.id && typeof vote.id === 'string' && vote.id.startsWith('demo-vote-')}
+                  <button class="remove-vote-btn" on:click={() => removeDemoVote(vote.id)}>
+                    ×
+                  </button>
+                {/if}
+              </li>
+            {/each}
+          </ul>
         </div>
       </div>
     </div>
@@ -1483,5 +1632,165 @@
 
   .disagreement-btn.btn-no:hover {
     background-color: #f57c00;
+  }
+
+  .needs-id-votes-section {
+    margin-top: 1.5rem;
+    padding: 1rem;
+    background-color: #f0f8ff;
+    border-radius: 4px;
+    border: 1px solid #b3d9ff;
+    transition: all 0.3s;
+  }
+
+  .needs-id-votes-section.disabled {
+    background-color: #f5f5f5;
+    border-color: #ddd;
+    opacity: 0.6;
+  }
+
+  .needs-id-votes-section.disabled .needs-id-votes-label,
+  .needs-id-votes-section.disabled .vote-label {
+    color: #999;
+  }
+
+  .needs-id-votes-label {
+    font-size: 0.95rem;
+    color: #333;
+    margin-bottom: 0.75rem;
+    font-weight: 500;
+  }
+
+  .needs-id-votes-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .vote-option {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .vote-checkmark {
+    background: none;
+    border: 2px solid #74ac00;
+    color: #74ac00;
+    font-size: 1.2rem;
+    font-weight: bold;
+    border-radius: 4px;
+    cursor: pointer;
+    padding: 0.25rem 0.5rem;
+    width: auto;
+    transition: all 0.2s;
+  }
+
+  .vote-checkmark:hover:not(:disabled) {
+    background-color: #74ac00;
+    color: white;
+  }
+
+  .vote-checkmark:disabled {
+    border-color: #ccc;
+    color: #ccc;
+    cursor: not-allowed;
+  }
+
+  .vote-label {
+    font-size: 0.95rem;
+    color: #555;
+  }
+
+  .vote-count {
+    background: none;
+    border: none;
+    color: #74ac00;
+    text-decoration: underline;
+    cursor: pointer;
+    font-size: 0.9rem;
+    padding: 0;
+    width: auto;
+    font-weight: 600;
+  }
+
+  .vote-count:hover {
+    color: #5d8800;
+    background: none;
+  }
+
+  .vote-count-zero {
+    font-size: 0.9rem;
+    color: #999;
+  }
+
+  .votes-modal .modal-content {
+    max-width: 500px;
+  }
+
+  .voters-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .voter-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    margin-bottom: 0.5rem;
+    background-color: #f9f9f9;
+    border-radius: 4px;
+    border: 1px solid #e0e0e0;
+    position: relative;
+  }
+
+  .voter-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    object-fit: cover;
+  }
+
+  .voter-icon-placeholder {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background-color: #74ac00;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+  }
+
+  .voter-login {
+    font-weight: 500;
+    color: #333;
+  }
+
+  .remove-vote-btn {
+    position: absolute;
+    top: 0.25rem;
+    right: 0.25rem;
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    line-height: 1;
+    color: #999;
+    cursor: pointer;
+    padding: 0.25rem 0.5rem;
+    width: auto;
+  }
+
+  .remove-vote-btn:hover {
+    color: #c00;
+    background-color: transparent;
+  }
+
+  .voter-icon-placeholder.smiley {
+    font-size: 20px;
+    line-height: 32px;
   }
 </style>
