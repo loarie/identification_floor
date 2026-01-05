@@ -19,17 +19,12 @@ The app pulls in a real iNaturalist observation and lets you **simulate** differ
   - Observation Taxon  
   - Quality Grade  
   would change on iNaturalist
+- Toggles between current behavior on the site and a an alternative that handles infraspecies IDs slightly differently
 
 ## What it does *not* do
 
 - Does **not** write anything back to iNaturalist  
 - Does **not** represent official iNaturalist behavior in all edge cases
-
-## Known gaps / not yet implemented
-
-- “Based on the Evidence, can the Community Taxon be improved?” (DQA)  
-- Community Taxon opt-out behavior  
-- Some edge cases around subspecies and disagreement
 
 ## Status
 
