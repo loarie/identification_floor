@@ -24,6 +24,139 @@
     return emojis[Math.floor(Math.random() * emojis.length)];
   }
 
+  // Function to update URL with current demo state
+  function updateURL() {
+    if (!observation || (observation.id !== 0 && observation.id !== -1)) return;
+    if (demoIdentifications.length === 0 && demoVotes.length === 0 && mode === 'current') return;
+
+    const params = new URLSearchParams();
+    params.set('obs', observationId);
+
+    if (mode !== 'current') {
+      params.set('mode', mode);
+    }
+
+    // Encode demo identifications: taxonId:userLetter:emoji:disagreement
+    if (demoIdentifications.length > 0) {
+      const idsParam = demoIdentifications.map(id => {
+        const userLetter = id.user.login.replace('Person', '');
+        const emoji = id.user.emoji || '';
+        const disagreement = id.disagreement ? '1' : '0';
+        return `${id.taxon.id}:${userLetter}:${encodeURIComponent(emoji)}:${disagreement}`;
+      }).join('|');
+      params.set('ids', idsParam);
+    }
+
+    // Encode demo votes: flag:userLetter:emoji
+    if (demoVotes.length > 0) {
+      const votesParam = demoVotes.map(vote => {
+        const userLetter = vote.user.login.replace('User', '');
+        const emoji = vote.user.emoji || '';
+        const flag = vote.vote_flag ? '1' : '0';
+        return `${flag}:${userLetter}:${encodeURIComponent(emoji)}`;
+      }).join('|');
+      params.set('votes', votesParam);
+    }
+
+    const newURL = `${window.location.pathname}?${params.toString()}`;
+    window.history.replaceState({}, '', newURL);
+  }
+
+  // Function to load state from URL
+  async function loadStateFromURL() {
+    const params = new URLSearchParams(window.location.search);
+    const obsParam = params.get('obs');
+
+    if (!obsParam) return;
+
+    observationId = obsParam;
+
+    // Set mode
+    const modeParam = params.get('mode');
+    if (modeParam === 'alternative') {
+      mode = 'alternative';
+    }
+
+    // Fetch the observation first
+    await fetchObservation();
+
+    // Load demo identifications
+    const idsParam = params.get('ids');
+    if (idsParam && observation) {
+      const idEntries = idsParam.split('|');
+      for (const entry of idEntries) {
+        const [taxonId, userLetter, encodedEmoji, disagreement] = entry.split(':');
+
+        // Fetch taxon details
+        try {
+          const response = await fetch(`https://api.inaturalist.org/v1/taxa/${taxonId}`);
+          const data = await response.json();
+          if (data.results && data.results.length > 0) {
+            const taxon = data.results[0];
+            const emoji = decodeURIComponent(encodedEmoji);
+
+            const newId = {
+              id: `demo-${Date.now()}-${Math.random()}`,
+              user: {
+                login: `Person${userLetter}`,
+                icon: null,
+                emoji: emoji
+              },
+              taxon: taxon,
+              current: true,
+              created_at: new Date().toISOString(),
+              disagreement: disagreement === '1',
+              previous_observation_taxon: disagreement === '1' ? observation.taxon : null
+            };
+
+            demoIdentifications = [...demoIdentifications, newId];
+            demoIdCounter++;
+
+            // Small delay to ensure unique timestamps
+            await new Promise(resolve => setTimeout(resolve, 10));
+          }
+        } catch (e) {
+          console.error(`Failed to load taxon ${taxonId}:`, e);
+        }
+      }
+    }
+
+    // Load demo votes
+    const votesParam = params.get('votes');
+    if (votesParam && observation) {
+      const voteEntries = votesParam.split('|');
+      for (const entry of voteEntries) {
+        const [flag, userLetter, encodedEmoji] = entry.split(':');
+        const emoji = decodeURIComponent(encodedEmoji);
+
+        const newVote = {
+          id: `demo-vote-${Date.now()}-${Math.random()}`,
+          user: {
+            login: `User${userLetter}`,
+            icon: null,
+            emoji: emoji
+          },
+          vote_scope: 'needs_id',
+          vote_flag: flag === '1',
+          created_at: new Date().toISOString()
+        };
+
+        demoVotes = [...demoVotes, newVote];
+        demoVoteCounter++;
+
+        // Small delay to ensure unique timestamps
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+    }
+  }
+
+  // Load state from URL on mount
+  import { onMount } from 'svelte';
+
+  onMount(() => {
+    loadStateFromURL();
+  });
+
   async function fetchObservation() {
     if (!observationId.trim()) {
       error = 'Please enter an observation ID';
@@ -411,6 +544,11 @@
   $: if (observation && allIdentifications !== undefined && communityTaxon !== undefined && userOptedOutOfCommunityTaxon !== undefined && yesVotes !== undefined && noVotes !== undefined && mode !== undefined) {
     updateObservationTaxon();
     updateObservationQualityGrade();
+  }
+
+  // Update URL when demo state changes
+  $: if (observation && (demoIdentifications.length > 0 || demoVotes.length > 0 || mode !== 'current')) {
+    updateURL();
   }
 
   function updateObservationTaxon() {
