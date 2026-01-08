@@ -158,7 +158,35 @@
 
   onMount(() => {
     loadStateFromURL();
+
+    // Load Typeform embed script
+    const script = document.createElement('script');
+    script.src = '//embed.typeform.com/next/embed.js';
+    script.async = true;
+    document.head.appendChild(script);
   });
+
+  // Initialize Typeform when survey modal opens
+  $: if (showSurveyModal && typeof window !== 'undefined') {
+    // Wait for next tick to ensure DOM is updated
+    setTimeout(() => {
+      // Check if Typeform library is loaded
+      const tf = (window as any).tf;
+      if (tf && tf.createWidget) {
+        const container = document.querySelector('[data-tf-live="01KEDZY3J7A6N13J86DXMST71S"]');
+        if (container && !container.querySelector('iframe')) {
+          // Clear any existing content
+          container.innerHTML = '';
+          // Create the widget
+          tf.createWidget('01KEDZY3J7A6N13J86DXMST71S', {
+            container: container,
+            height: 500,
+            width: '100%'
+          });
+        }
+      }
+    }, 100);
+  }
 
   async function fetchObservation() {
     if (!observationId.trim()) {
@@ -1502,9 +1530,6 @@
   {/if}
 </main>
 
-<svelte:head>
-  <script src="//embed.typeform.com/next/embed.js"></script>
-</svelte:head>
 
 <style>
   main {
@@ -2470,5 +2495,45 @@
   .voter-icon-placeholder.smiley {
     font-size: 20px;
     line-height: 32px;
+  }
+
+  .header-controls {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .survey-btn {
+    padding: 0.5rem 1rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: white;
+    background-color: #74ac00;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+    width: auto;
+    white-space: nowrap;
+  }
+
+  .survey-btn:hover {
+    background-color: #5d8800;
+  }
+
+  .survey-modal {
+    max-width: 800px;
+    width: 90%;
+  }
+
+  .survey-body {
+    min-height: 500px;
+    padding: 0;
+  }
+
+  .survey-body > div {
+    width: 100%;
+    height: 100%;
+    min-height: 500px;
   }
 </style>
