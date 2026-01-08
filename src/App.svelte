@@ -166,6 +166,33 @@
     document.head.appendChild(script);
   });
 
+  function resetApp() {
+    // Clear all state
+    observationId = '';
+    observation = null;
+    loading = false;
+    error = '';
+    taxonSearchQuery = '';
+    taxonSearchResults = [];
+    selectedTaxon = null;
+    showTaxonDropdown = false;
+    demoIdentifications = [];
+    showAlgorithmModal = false;
+    demoIdCounter = 0;
+    showDisagreementModal = false;
+    pendingIdentification = null;
+    showNeedsIdVotesModal = false;
+    needsIdVotesModalType = null;
+    demoVoteCounter = 0;
+    demoVotes = [];
+    mode = 'current';
+    showObserverDropdown = false;
+    showSurveyModal = false;
+
+    // Clear URL
+    window.history.replaceState({}, '', window.location.pathname);
+  }
+
   // Initialize Typeform when survey modal opens
   $: if (showSurveyModal && typeof window !== 'undefined') {
     // Wait for script to load and DOM to be ready
@@ -1082,7 +1109,10 @@
 
 <main>
   <div class="header-container">
-    <h1>iNaturalist Subspecies Identifications Demo</h1>
+    <h1 class="clickable-title" on:click={resetApp}>
+      <img src="https://static.inaturalist.org/wiki_page_attachments/3154-original.png" alt="iNaturalist logo" class="title-logo" />
+      iNaturalist Subspecies Identifications Demo
+    </h1>
     <div class="header-controls">
       <div class="mode-toggle">
         <span class="mode-label">Mode:</span>
@@ -1103,7 +1133,7 @@
 
   {#if !observation}
     <div class="demo-intro">
-      <p>This demo is meant to simulate and explain current and proposed alternatives how the observation label responds to subspecies identifications. This demo is meant to be short lived and will not be maintained after assessing the proposed alternative. Click on one of the examples below or enter an iNaturalist observation ID (e.g. 47963 or 0 or -1 for a blank observation) in the form below to load an example. Use the controls in the upper right to toggle between "Current" and "Alternative" modes and to vote.</p>
+      <p>This demo is meant to simulate and explain current and proposed alternatives how the observation label responds to subspecies identifications. This demo is meant to be short lived and will not be maintained after assessing the proposed alternative. Click on one of the examples below or enter an iNaturalist observation ID (e.g. 47963 or 0 or -1 for a blank observation) in the form below to load an example. Use the controls in the upper right to toggle between "Current" and "Alternative" modes and to vote. <a href="https://www.inaturalist.org/blog/122781" target="_blank" rel="noopener noreferrer">Read more on our blog</a>.</p>
       <div class="demo-links">
         <a href="http://localhost:5173/subspecies_identifications_demo/?obs=0&ids=120135%3AC%3A%25F0%259F%2598%2580%3A0%7C27250%3AD%3A%25F0%259F%2590%25B1%3A0" class="demo-link">
           <img src="/subspecies_identifications_demo/left.png" alt="Current" />
@@ -1579,6 +1609,23 @@
     margin: 0;
     flex-shrink: 1;
     min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .title-logo {
+    height: 32px;
+    width: auto;
+  }
+
+  .clickable-title {
+    cursor: pointer;
+    transition: color 0.2s;
+  }
+
+  .clickable-title:hover {
+    color: #74ac00;
   }
 
   .mode-toggle {
