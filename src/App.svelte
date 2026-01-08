@@ -1156,12 +1156,6 @@
     </div>
   {/if}
 
-  {#if mode === 'alternative'}
-    <div class="alternative-explanation">
-      This simulates a proposed alternative for handling infraspecies on iNaturalist, where observations do not advance to infraspecies until the community taxon itself reaches the infraspecies rank.
-    </div>
-  {/if}
-
   {#if !observation}
     <form on:submit={handleSubmit}>
       <div class="input-group">
@@ -1185,6 +1179,12 @@
   {/if}
 
   {#if observation}
+    {#if mode === 'alternative'}
+      <div class="alternative-explanation">
+        This mode simulates a proposed alternative for handling infraspecies on iNaturalist, where observations do not advance to infraspecies until the community taxon itself reaches the infraspecies rank.
+      </div>
+    {/if}
+
     <div class="results">
       <div class="taxon-quality-row">
         <span class="taxon-name-display">{getTaxonDisplay(observation)}</span>
