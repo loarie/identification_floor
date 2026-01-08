@@ -1121,6 +1121,10 @@
       <img src="https://static.inaturalist.org/wiki_page_attachments/3154-original.png" alt="iNaturalist logo" class="title-logo" />
       iNaturalist Subspecies Identifications Demo
     </h1>
+    <div class="header-disclaimer">
+      <div class="disclaimer-line">This demo does not write anything back to iNat.</div>
+      <div class="disclaimer-line"><strong>No data will change on iNat via its use.</strong></div>
+    </div>
     <div class="header-controls">
       <button class="tutorial-btn" on:click={() => showTutorialModal = true}>
         Tutorial
@@ -1664,7 +1668,7 @@
   {/if}
 
   <footer class="demo-footer">
-    <p>This is a temporary demo built quickly using <a href="https://claude.ai/claude-code" target="_blank" rel="noopener noreferrer">Claude Code</a>, it does not adhere to the engineering standards of the iNaturalist <a href="https://www.inaturalist.org/" target="_blank" rel="noopener noreferrer">platform</a> or <a href="https://github.com/inaturalist" target="_blank" rel="noopener noreferrer">codebase</a>.</p>
+    <p>This is a temporary demo built quickly using <a href="https://claude.ai/claude-code" target="_blank" rel="noopener noreferrer">Claude Code</a>, it does not adhere to the engineering standards of the iNaturalist <a href="https://www.inaturalist.org/" target="_blank" rel="noopener noreferrer">platform</a> or <a href="https://github.com/inaturalist" target="_blank" rel="noopener noreferrer">codebase</a>. The demo will be live only for as long as it takes to come to a path forward. Once we deploy and QA an update to the main site, we will retire this demo.</p>
     <p class="footer-links">
       <a href="https://github.com/loarie/subspecies_identifications_demo" target="_blank" rel="noopener noreferrer">Source</a>
       <span class="separator">•</span>
@@ -1723,6 +1727,20 @@
 
   .clickable-title:hover {
     color: #74ac00;
+  }
+
+  .header-disclaimer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.1rem;
+  }
+
+  .disclaimer-line {
+    font-size: 0.75rem;
+    color: #666;
+    font-style: italic;
+    line-height: 1.2;
   }
 
   .mode-toggle {
