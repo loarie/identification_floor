@@ -1116,6 +1116,9 @@
       iNaturalist Subspecies Identifications Demo
     </h1>
     <div class="header-controls">
+      <button class="tutorial-btn" on:click={() => showTutorialModal = true}>
+        Tutorial
+      </button>
       <div class="mode-toggle">
         <span class="mode-label">Mode:</span>
         <label class="mode-option">
@@ -1127,9 +1130,6 @@
           <span>Alternative</span>
         </label>
       </div>
-      <button class="tutorial-btn" on:click={() => showTutorialModal = true}>
-        Tutorial
-      </button>
       <button class="survey-btn" on:click={() => showSurveyModal = true}>
         Vote on your preference
       </button>
@@ -1163,7 +1163,7 @@
           id="obs-id"
           type="text"
           bind:value={observationId}
-          placeholder="Enter an Obs ID, e.g., 47963, or 0 for an unknown observation, or -1 for an unknown opt-out"
+          placeholder="Load an iNat observation by entering the ID, e.g. 47963, or click the Tutorial for more details"
         />
         <button type="submit" disabled={loading}>
           {loading ? 'Loading...' : 'Fetch Observation'}
@@ -1451,7 +1451,7 @@
           id="obs-id-bottom"
           type="text"
           bind:value={observationId}
-          placeholder="Enter an Obs ID, e.g., 47963, or 0 for an unknown observation, or -1 for an unknown opt-out"
+          placeholder="Load an iNat observation by entering the ID, e.g. 47963, or click the Tutorial for more details"
         />
         <button type="submit" disabled={loading}>
           {loading ? 'Loading...' : 'Fetch Observation'}
