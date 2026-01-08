@@ -2723,6 +2723,7 @@
   .tutorial-body {
     max-height: calc(90vh - 120px);
     overflow-y: auto;
+    text-align: left;
   }
 
   .tutorial-body h3 {
