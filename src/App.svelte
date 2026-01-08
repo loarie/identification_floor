@@ -172,7 +172,7 @@
     const initTypeform = () => {
       const tf = (window as any).tf;
       if (tf && tf.createWidget) {
-        const container = document.querySelector('[data-tf-live="01KEDZY3J7A6N13J86DXMST71S"]');
+        const container = document.querySelector('[data-tf-live="we8cmOvB"]');
         if (container) {
           // Check if already initialized
           if (container.querySelector('iframe')) {
@@ -182,7 +182,7 @@
           container.innerHTML = '';
           // Create widget with explicit options
           try {
-            tf.createWidget('utUtp47T', {
+            tf.createWidget('we8cmOvB', {
               container: container,
               height: 700,
               width: '100%',
@@ -1539,7 +1539,7 @@
           <button class="modal-close" on:click={() => showSurveyModal = false}>×</button>
         </div>
         <div class="modal-body survey-body">
-          <div data-tf-live="01KEDZY3J7A6N13J86DXMST71S"></div>
+          <div data-tf-live="we8cmOvB"></div>
         </div>
       </div>
     </div>
