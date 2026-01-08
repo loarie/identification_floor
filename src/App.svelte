@@ -161,31 +161,47 @@
 
     // Load Typeform embed script
     const script = document.createElement('script');
-    script.src = '//embed.typeform.com/next/embed.js';
+    script.src = 'https://embed.typeform.com/next/embed.js';
     script.async = true;
     document.head.appendChild(script);
   });
 
   // Initialize Typeform when survey modal opens
   $: if (showSurveyModal && typeof window !== 'undefined') {
-    // Wait for next tick to ensure DOM is updated
-    setTimeout(() => {
-      // Check if Typeform library is loaded
+    // Wait for script to load and DOM to be ready
+    const initTypeform = () => {
       const tf = (window as any).tf;
       if (tf && tf.createWidget) {
         const container = document.querySelector('[data-tf-live="01KEDZY3J7A6N13J86DXMST71S"]');
-        if (container && !container.querySelector('iframe')) {
-          // Clear any existing content
+        if (container) {
+          // Check if already initialized
+          if (container.querySelector('iframe')) {
+            return;
+          }
+          // Clear container
           container.innerHTML = '';
-          // Create the widget
-          tf.createWidget('01KEDZY3J7A6N13J86DXMST71S', {
-            container: container,
-            height: 500,
-            width: '100%'
-          });
+          // Create widget with explicit options
+          try {
+            tf.createWidget('utUtp47T', {
+              container: container,
+              height: 700,
+              width: '100%',
+              opacity: 100,
+              hidden: {},
+              onReady: () => console.log('Typeform ready'),
+              onSubmit: () => console.log('Typeform submitted')
+            });
+          } catch (e) {
+            console.error('Error creating Typeform widget:', e);
+          }
         }
+      } else {
+        // Script not loaded yet, try again
+        setTimeout(initTypeform, 200);
       }
-    }, 100);
+    };
+
+    setTimeout(initTypeform, 100);
   }
 
   async function fetchObservation() {
@@ -1087,7 +1103,7 @@
 
   {#if !observation}
     <div class="demo-intro">
-      <p>This demo is meant to simulate and explain current and proposed alternatives how the observation label responds to subspecies identifications. This demo is meant to be short lived and will not be maintained after assessing the proposed alternative</p>
+      <p>This demo is meant to simulate and explain current and proposed alternatives how the observation label responds to subspecies identifications. This demo is meant to be short lived and will not be maintained after assessing the proposed alternative. Click on one of the examples below or enter an iNaturalist observation ID (e.g. 47963 or 0 or -1 for a blank observation) in the form below to load an example. Use the controls in the upper right to toggle between "Current" and "Alternative" modes and to vote.</p>
       <div class="demo-links">
         <a href="http://localhost:5173/subspecies_identifications_demo/?obs=0&ids=120135%3AC%3A%25F0%259F%2598%2580%3A0%7C27250%3AD%3A%25F0%259F%2590%25B1%3A0" class="demo-link">
           <img src="/subspecies_identifications_demo/left.png" alt="Current" />
@@ -2522,18 +2538,31 @@
   }
 
   .survey-modal {
-    max-width: 800px;
-    width: 90%;
+    max-width: 1000px;
+    width: 95%;
+    max-height: 90vh;
   }
 
   .survey-body {
-    min-height: 500px;
+    min-height: 700px;
+    max-height: calc(90vh - 100px);
     padding: 0;
+    overflow: auto;
   }
 
   .survey-body > div {
     width: 100%;
     height: 100%;
-    min-height: 500px;
+    min-height: 700px;
+  }
+
+  .survey-body :global(.tf-v1-widget) {
+    width: 100% !important;
+    height: 700px !important;
+  }
+
+  .survey-body :global(iframe) {
+    width: 100% !important;
+    height: 700px !important;
   }
 </style>
