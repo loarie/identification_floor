@@ -17,6 +17,8 @@
   let demoVoteCounter = 0;
   let demoVotes: any[] = [];
   let mode: 'current' | 'alternative' = 'current';
+  let showObserverDropdown = false;
+  let showSurveyModal = false;
 
   const emojis = ['😊', '🙂', '😎', '🤓', '😀', '🤗', '😃', '😄', '🙃', '😁', '😺', '🐱', '🦊', '🐶', '🐼', '🐨', '🦁', '🐯', '🐸', '🐝'];
 
@@ -98,6 +100,7 @@
             const newId = {
               id: `demo-${Date.now()}-${Math.random()}`,
               user: {
+                id: userLetter === '0' ? -1 : -(userLetter.charCodeAt(0)),  // Assign unique negative ID
                 login: `Person${userLetter}`,
                 icon: null,
                 emoji: emoji
@@ -207,7 +210,11 @@
               prefers_community_taxa: true
             }
           },
-          observation_photos: [],
+          observation_photos: [{
+            photo: {
+              url: 'https://inaturalist-open-data.s3.amazonaws.com/photos/77105/medium.jpg'
+            }
+          }],
           sounds: [],
           obscured: false,
           private_geojson: null
@@ -251,7 +258,11 @@
               prefers_community_taxon: false
             }
           },
-          observation_photos: [],
+          observation_photos: [{
+            photo: {
+              url: 'https://inaturalist-open-data.s3.amazonaws.com/photos/77105/medium.jpg'
+            }
+          }],
           sounds: [],
           obscured: false,
           private_geojson: null
@@ -420,6 +431,7 @@
     const newId = {
       id: `demo-${Date.now()}`,
       user: {
+        id: -(personLetter.charCodeAt(0)),  // Assign unique negative ID based on letter
         login: `Person${personLetter}`,
         icon: null,
         emoji: emoji
@@ -538,10 +550,50 @@
     demoVotes = demoVotes.filter(v => v.id !== voteId);
   }
 
+  // Get list of available observers (Person0 + any PersonX from demo identifications)
+  $: availableObservers = observation && observation.id === -1 ? (() => {
+    // Always start with Person0 as the original observer
+    const person0 = {
+      id: -1,
+      login: 'Person0',
+      icon: null,
+      emoji: observation.user.emoji || getRandomEmoji(),
+      preferences: {
+        prefers_community_taxa: false,
+        prefers_community_taxon: false
+      }
+    };
+    const observers = [person0];
+
+    // Add any PersonX from demo identifications
+    demoIdentifications.forEach(id => {
+      if (id.user.login.startsWith('Person') && id.user.login !== 'Person0' && !observers.find(o => o.login === id.user.login)) {
+        observers.push(id.user);
+      }
+    });
+    return observers;
+  })() : [];
+
+  function changeObserver(newObserver: any) {
+    if (!observation) return;
+    // Preserve the opted-out preferences from the original observer
+    const newUser = {
+      ...newObserver,
+      preferences: {
+        prefers_community_taxa: false,
+        prefers_community_taxon: false
+      }
+    };
+    observation.user = newUser;
+    showObserverDropdown = false;
+    // Trigger recalculation of observation taxon and quality grade
+    observation = observation; // Force reactivity
+  }
+
   // Update observation taxon and quality grade when identifications or votes change
   // This needs to run even when there are 0 identifications (e.g., when all are removed)
-  // Explicitly depend on allIdentifications, communityTaxon, userOptedOutOfCommunityTaxon, yesVotes, noVotes, and mode to ensure reactivity
-  $: if (observation && allIdentifications !== undefined && communityTaxon !== undefined && userOptedOutOfCommunityTaxon !== undefined && yesVotes !== undefined && noVotes !== undefined && mode !== undefined) {
+  // Explicitly depend on allIdentifications, communityTaxon, userOptedOutOfCommunityTaxon, yesVotes, noVotes, mode, and observation.user to ensure reactivity
+  $: if (observation && observation.user && allIdentifications !== undefined && communityTaxon !== undefined && userOptedOutOfCommunityTaxon !== undefined && yesVotes !== undefined && noVotes !== undefined && mode !== undefined) {
     updateObservationTaxon();
     updateObservationQualityGrade();
   }
@@ -558,16 +610,33 @@
 
     // If user has opted out of community taxon, use only the observer's identification
     if (userOptedOutOfCommunityTaxon) {
+      console.log('=== DEBUG Observer Change ===');
+      console.log('Observer login:', observation.user.login);
+      console.log('Observer id:', observation.user.id);
+      console.log('All identifications:', currentIdentifications.map(id => ({
+        user: id.user.login,
+        taxon: id.taxon?.name,
+        disagreement: id.disagreement
+      })));
+
       // Find the observer's current identification
       const observerIdentification = currentIdentifications.find(
         id => id.user.login === observation.user.login || id.user.id === observation.user.id
       );
 
+      console.log('Found observer identification:', observerIdentification ? {
+        user: observerIdentification.user.login,
+        taxon: observerIdentification.taxon?.name
+      } : null);
+
       if (observerIdentification) {
         observation.taxon = observerIdentification.taxon;
+        console.log('Set observation.taxon to:', observation.taxon?.name);
       } else {
         observation.taxon = null;
+        console.log('No observer identification found, setting taxon to null');
       }
+      console.log('=== END DEBUG ===');
       return;
     }
 
@@ -779,6 +848,12 @@
         observation.quality_grade = 'casual';
       }
     }
+
+    // If true votes (Yes) > false votes (No) AND quality grade is research
+    // Then the community is saying the taxon can be improved, so downgrade to needs_id
+    if (yesVotes.length > noVotes.length && observation.quality_grade === 'research') {
+      observation.quality_grade = 'needs_id';
+    }
   }
 
   function calculateAlgorithmSummary(obs: any): any[] {
@@ -963,19 +1038,38 @@
 
 <main>
   <div class="header-container">
-    <h1>iNaturalist identification floor demo</h1>
-    <div class="mode-toggle">
-      <span class="mode-label">Mode:</span>
-      <label class="mode-option">
-        <input type="radio" name="mode" value="current" bind:group={mode} />
-        <span>Current</span>
-      </label>
-      <label class="mode-option">
-        <input type="radio" name="mode" value="alternative" bind:group={mode} />
-        <span>Alternative</span>
-      </label>
+    <h1>iNaturalist Subspecies Identifications Demo</h1>
+    <div class="header-controls">
+      <div class="mode-toggle">
+        <span class="mode-label">Mode:</span>
+        <label class="mode-option">
+          <input type="radio" name="mode" value="current" bind:group={mode} />
+          <span>Current</span>
+        </label>
+        <label class="mode-option">
+          <input type="radio" name="mode" value="alternative" bind:group={mode} />
+          <span>Alternative</span>
+        </label>
+      </div>
+      <button class="survey-btn" on:click={() => showSurveyModal = true}>
+        Vote on your preference
+      </button>
     </div>
   </div>
+
+  {#if !observation}
+    <div class="demo-intro">
+      <p>This demo is meant to simulate and explain current and proposed alternatives how the observation label responds to subspecies identifications. This demo is meant to be short lived and will not be maintained after assessing the proposed alternative</p>
+      <div class="demo-links">
+        <a href="http://localhost:5173/subspecies_identifications_demo/?obs=0&ids=120135%3AC%3A%25F0%259F%2598%2580%3A0%7C27250%3AD%3A%25F0%259F%2590%25B1%3A0" class="demo-link">
+          <img src="/subspecies_identifications_demo/left.png" alt="Current" />
+        </a>
+        <a href="http://localhost:5173/subspecies_identifications_demo/?obs=0&mode=alternative&ids=120135%3AC%3A%25F0%259F%2598%2580%3A0%7C27250%3AD%3A%25F0%259F%2590%25B1%3A0" class="demo-link">
+          <img src="/subspecies_identifications_demo/right.png" alt="Alternative" />
+        </a>
+      </div>
+    </div>
+  {/if}
 
   {#if mode === 'alternative'}
     <div class="alternative-explanation">
@@ -989,7 +1083,7 @@
         id="obs-id"
         type="text"
         bind:value={observationId}
-        placeholder="Enter an Obs ID, e.g., 63, or 0 for an unknown observation, or -1 for an unknown opt-out"
+        placeholder="Enter an Obs ID, e.g., 47963, or 0 for an unknown observation, or -1 for an unknown opt-out"
       />
       <button type="submit" disabled={loading}>
         {loading ? 'Loading...' : 'Fetch Observation'}
@@ -1024,21 +1118,76 @@
           </div>
           <div class="detail user-detail">
             <strong>Observer:</strong>
-            <div class="user-info">
-              {#if observation.user.icon}
-                <img src={observation.user.icon} alt={observation.user.login} class="user-icon" />
+            <div class="user-info-container">
+              {#if observation.id === -1}
+                <div class="observer-chooser">
+                  <button
+                    class="observer-selector"
+                    on:click={() => showObserverDropdown = !showObserverDropdown}
+                  >
+                    <div class="user-info">
+                      {#if observation.user.icon}
+                        <img src={observation.user.icon} alt={observation.user.login} class="user-icon" />
+                      {:else}
+                        {#if observation.user.emoji}
+                          <div class="user-icon-placeholder smiley">
+                            {observation.user.emoji}
+                          </div>
+                        {:else}
+                          <div class="user-icon-placeholder">
+                            {observation.user.login.charAt(0).toUpperCase()}
+                          </div>
+                        {/if}
+                      {/if}
+                      <span class="user-login">{observation.user.login}</span>
+                      <span class="dropdown-arrow">▼</span>
+                    </div>
+                  </button>
+                  {#if showObserverDropdown && availableObservers.length > 0}
+                    <div class="observer-dropdown">
+                      {#each availableObservers as observer}
+                        <button
+                          class="observer-option"
+                          class:selected={observer.login === observation.user.login}
+                          on:click={() => changeObserver(observer)}
+                        >
+                          {#if observer.icon}
+                            <img src={observer.icon} alt={observer.login} class="user-icon" />
+                          {:else}
+                            {#if observer.emoji}
+                              <div class="user-icon-placeholder smiley">
+                                {observer.emoji}
+                              </div>
+                            {:else}
+                              <div class="user-icon-placeholder">
+                                {observer.login.charAt(0).toUpperCase()}
+                              </div>
+                            {/if}
+                          {/if}
+                          <span class="user-login">{observer.login}</span>
+                        </button>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
               {:else}
-                {#if observation.user.emoji}
-                  <div class="user-icon-placeholder smiley">
-                    {observation.user.emoji}
-                  </div>
-                {:else}
-                  <div class="user-icon-placeholder">
-                    {observation.user.login.charAt(0).toUpperCase()}
-                  </div>
-                {/if}
+                <div class="user-info">
+                  {#if observation.user.icon}
+                    <img src={observation.user.icon} alt={observation.user.login} class="user-icon" />
+                  {:else}
+                    {#if observation.user.emoji}
+                      <div class="user-icon-placeholder smiley">
+                        {observation.user.emoji}
+                      </div>
+                    {:else}
+                      <div class="user-icon-placeholder">
+                        {observation.user.login.charAt(0).toUpperCase()}
+                      </div>
+                    {/if}
+                  {/if}
+                  <span class="user-login">{observation.user.login}</span>
+                </div>
               {/if}
-              <span class="user-login">{observation.user.login}</span>
             </div>
           </div>
           <div class="community-taxon-section">
@@ -1337,7 +1486,25 @@
       </div>
     </div>
   {/if}
+
+  {#if showSurveyModal}
+    <div class="modal-overlay" on:click={() => showSurveyModal = false}>
+      <div class="modal-content survey-modal" on:click|stopPropagation>
+        <div class="modal-header">
+          <h2>Vote on your preference</h2>
+          <button class="modal-close" on:click={() => showSurveyModal = false}>×</button>
+        </div>
+        <div class="modal-body survey-body">
+          <div data-tf-live="01KEDZY3J7A6N13J86DXMST71S"></div>
+        </div>
+      </div>
+    </div>
+  {/if}
 </main>
+
+<svelte:head>
+  <script src="//embed.typeform.com/next/embed.js"></script>
+</svelte:head>
 
 <style>
   main {
@@ -1404,6 +1571,44 @@
 
   .mode-option span {
     cursor: pointer;
+  }
+
+  .demo-intro {
+    margin-bottom: 2rem;
+    text-align: center;
+  }
+
+  .demo-intro p {
+    font-size: 1rem;
+    line-height: 1.6;
+    color: #333;
+    margin-bottom: 1.5rem;
+  }
+
+  .demo-links {
+    display: flex;
+    justify-content: center;
+    gap: 2rem;
+    align-items: center;
+  }
+
+  .demo-link {
+    display: block;
+    text-decoration: none;
+    transition: transform 0.2s;
+  }
+
+  .demo-link:hover {
+    transform: scale(1.05);
+  }
+
+  .demo-link img {
+    width: 300px;
+    height: 300px;
+    object-fit: cover;
+    border: 2px solid #ddd;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   }
 
   .alternative-explanation {
@@ -1594,6 +1799,94 @@
 
   .user-login {
     font-weight: 500;
+  }
+
+  .user-info-container {
+    position: relative;
+    display: inline-flex;
+  }
+
+  .observer-chooser {
+    position: relative;
+  }
+
+  .observer-selector {
+    background: none;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 0.25rem 0.5rem;
+    cursor: pointer;
+    width: auto;
+    transition: all 0.2s;
+    color: #000;
+  }
+
+  .observer-selector:hover {
+    border-color: #74ac00;
+    background-color: #f9f9f9;
+    color: #000;
+  }
+
+  .observer-selector .user-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .observer-selector .user-login {
+    color: #000;
+  }
+
+  .dropdown-arrow {
+    font-size: 0.7rem;
+    color: #666;
+    margin-left: 0.25rem;
+  }
+
+  .observer-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 0.25rem;
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    z-index: 100;
+    min-width: 150px;
+  }
+
+  .observer-option {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    background: none;
+    border: none;
+    border-bottom: 1px solid #f0f0f0;
+    cursor: pointer;
+    width: 100%;
+    text-align: left;
+    transition: background-color 0.2s;
+    color: #000;
+  }
+
+  .observer-option:last-child {
+    border-bottom: none;
+  }
+
+  .observer-option:hover {
+    background-color: #f5f5f5;
+    color: #000;
+  }
+
+  .observer-option.selected {
+    background-color: #e8f5e9;
+    color: #000;
+  }
+
+  .observer-option .user-login {
+    color: #000;
   }
 
   .community-taxon-section {
