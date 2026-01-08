@@ -1138,7 +1138,7 @@
 
   {#if !observation}
     <div class="demo-intro">
-      <p>This demo is meant to simulate and explain current and proposed alternatives how the observation label responds to subspecies identifications. This demo is meant to be short lived and will not be maintained after assessing the proposed alternative. Click on one of the examples below or enter an iNaturalist observation ID (e.g. 47963 or 0 or -1 for a blank observation) in the form below to load an example. Use the controls in the upper right to toggle between "Current" and "Alternative" modes and to vote. <a href="https://www.inaturalist.org/blog/122781" target="_blank" rel="noopener noreferrer">Read more on our blog</a>.</p>
+      <p>This demo compares how iNaturalist currently handles subspecies identifications versus a proposed alternative approach. Click an example below or enter an observation ID to explore the differences. Click "Tutorial" in the header for detailed instructions. <a href="https://www.inaturalist.org/blog/122781" target="_blank" rel="noopener noreferrer">Read more on our blog</a>.</p>
       <div class="demo-links">
         <a href="http://localhost:5173/subspecies_identifications_demo/?obs=0&ids=120135%3AC%3A%25F0%259F%2598%2580%3A0%7C27250%3AD%3A%25F0%259F%2590%25B1%3A0" class="demo-link">
           <img src="/subspecies_identifications_demo/left.png" alt="Current" />
@@ -1156,24 +1156,26 @@
     </div>
   {/if}
 
-  <form on:submit={handleSubmit}>
-    <div class="input-group">
-      <input
-        id="obs-id"
-        type="text"
-        bind:value={observationId}
-        placeholder="Enter an Obs ID, e.g., 47963, or 0 for an unknown observation, or -1 for an unknown opt-out"
-      />
-      <button type="submit" disabled={loading}>
-        {loading ? 'Loading...' : 'Fetch Observation'}
-      </button>
-    </div>
-  </form>
+  {#if !observation}
+    <form on:submit={handleSubmit}>
+      <div class="input-group">
+        <input
+          id="obs-id"
+          type="text"
+          bind:value={observationId}
+          placeholder="Enter an Obs ID, e.g., 47963, or 0 for an unknown observation, or -1 for an unknown opt-out"
+        />
+        <button type="submit" disabled={loading}>
+          {loading ? 'Loading...' : 'Fetch Observation'}
+        </button>
+      </div>
+    </form>
 
-  {#if error}
-    <div class="error">
-      {error}
-    </div>
+    {#if error}
+      <div class="error">
+        {error}
+      </div>
+    {/if}
   {/if}
 
   {#if observation}
@@ -1442,6 +1444,26 @@
         {/if}
       </div>
     </div>
+
+    <form on:submit={handleSubmit} class="bottom-form">
+      <div class="input-group">
+        <input
+          id="obs-id-bottom"
+          type="text"
+          bind:value={observationId}
+          placeholder="Enter an Obs ID, e.g., 47963, or 0 for an unknown observation, or -1 for an unknown opt-out"
+        />
+        <button type="submit" disabled={loading}>
+          {loading ? 'Loading...' : 'Fetch Observation'}
+        </button>
+      </div>
+    </form>
+
+    {#if error}
+      <div class="error">
+        {error}
+      </div>
+    {/if}
   {/if}
 
   {#if showAlgorithmModal && observation}
@@ -2752,6 +2774,12 @@
   .tutorial-body ul ul {
     margin-top: 0.5rem;
     margin-bottom: 0.5rem;
+  }
+
+  .bottom-form {
+    margin-top: 2rem;
+    padding-top: 2rem;
+    border-top: 2px solid #ddd;
   }
 
   .demo-footer {
