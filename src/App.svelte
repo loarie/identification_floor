@@ -83,6 +83,9 @@
     // Fetch the observation first
     await fetchObservation();
 
+    // Clear the input field after loading from URL
+    observationId = '';
+
     // Load demo identifications
     const idsParam = params.get('ids');
     if (idsParam && observation) {
@@ -366,7 +369,10 @@
 
   function handleSubmit(event: Event) {
     event.preventDefault();
+    const idToFetch = observationId;
     fetchObservation();
+    // Clear the input field after submission
+    observationId = '';
   }
 
   function getTaxonDisplay(obs: any): string {
@@ -1182,9 +1188,16 @@
     <div class="results">
       <div class="taxon-quality-row">
         <span class="taxon-name-display">{getTaxonDisplay(observation)}</span>
-        <span class="quality-grade {observation.quality_grade}">
-          {getQualityGradeDisplay(observation.quality_grade)}
-        </span>
+        <div class="quality-grade-container">
+          <span class="quality-grade {observation.quality_grade}">
+            {getQualityGradeDisplay(observation.quality_grade)}
+          </span>
+          {#if observation.id && observation.id > 0}
+            <a href="https://www.inaturalist.org/observations/{observation.id}" target="_blank" rel="noopener noreferrer" class="obs-link" title="View on iNaturalist">
+              🔗
+            </a>
+          {/if}
+        </div>
       </div>
 
       <div class="obs-content">
@@ -1874,6 +1887,23 @@
     font-size: 1.3rem;
     font-weight: 600;
     color: #333;
+  }
+
+  .quality-grade-container {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .obs-link {
+    font-size: 1.2rem;
+    text-decoration: none;
+    transition: transform 0.2s;
+    display: inline-block;
+  }
+
+  .obs-link:hover {
+    transform: scale(1.2);
   }
 
   .obs-content {
