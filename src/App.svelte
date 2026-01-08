@@ -1146,11 +1146,11 @@
     <div class="demo-intro">
       <p>This demo compares how iNaturalist currently handles subspecies identifications versus a proposed alternative approach. Click an example below or enter an observation ID to explore the differences. Click "Tutorial" in the header for detailed instructions. <a href="https://www.inaturalist.org/blog/122781" target="_blank" rel="noopener noreferrer">Read more on our blog</a>.</p>
       <div class="demo-links">
-        <a href="http://localhost:5173/subspecies_identifications_demo/?obs=0&ids=120135%3AC%3A%25F0%259F%2598%2580%3A0%7C27250%3AD%3A%25F0%259F%2590%25B1%3A0" class="demo-link">
-          <img src="/subspecies_identifications_demo/left.png" alt="Current" />
+        <a href="/subspecies_identifications_demo/?obs=0&ids=120135%3AA%3A%25F0%259F%2598%2583%3A0%7C27250%3AB%3A%25F0%259F%2599%2583%3A0" class="demo-link">
+          <img src="/subspecies_identifications_demo/current.jpg" alt="Current" />
         </a>
-        <a href="http://localhost:5173/subspecies_identifications_demo/?obs=0&mode=alternative&ids=120135%3AC%3A%25F0%259F%2598%2580%3A0%7C27250%3AD%3A%25F0%259F%2590%25B1%3A0" class="demo-link">
-          <img src="/subspecies_identifications_demo/right.png" alt="Alternative" />
+        <a href="/subspecies_identifications_demo/?obs=0&mode=alternative&ids=120135%3AA%3A%25F0%259F%2598%2583%3A0%7C27250%3AB%3A%25F0%259F%2599%2583%3A0" class="demo-link">
+          <img src="/subspecies_identifications_demo/alternative.jpg" alt="Alternative" />
         </a>
       </div>
     </div>
@@ -1788,9 +1788,9 @@
   }
 
   .demo-link img {
-    width: 300px;
-    height: 300px;
-    object-fit: cover;
+    width: 250px;
+    height: 400px;
+    object-fit: contain;
     border: 2px solid #ddd;
     border-radius: 8px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
