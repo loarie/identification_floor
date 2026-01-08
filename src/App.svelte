@@ -19,6 +19,7 @@
   let mode: 'current' | 'alternative' = 'current';
   let showObserverDropdown = false;
   let showSurveyModal = false;
+  let showTutorialModal = false;
 
   const emojis = ['😊', '🙂', '😎', '🤓', '😀', '🤗', '😃', '😄', '🙃', '😁', '😺', '🐱', '🦊', '🐶', '🐼', '🐨', '🦁', '🐯', '🐸', '🐝'];
 
@@ -188,6 +189,7 @@
     mode = 'current';
     showObserverDropdown = false;
     showSurveyModal = false;
+    showTutorialModal = false;
 
     // Clear URL
     window.history.replaceState({}, '', window.location.pathname);
@@ -1125,6 +1127,9 @@
           <span>Alternative</span>
         </label>
       </div>
+      <button class="tutorial-btn" on:click={() => showTutorialModal = true}>
+        Tutorial
+      </button>
       <button class="survey-btn" on:click={() => showSurveyModal = true}>
         Vote on your preference
       </button>
@@ -1574,6 +1579,63 @@
       </div>
     </div>
   {/if}
+
+  {#if showTutorialModal}
+    <div class="modal-overlay" on:click={() => showTutorialModal = false}>
+      <div class="modal-content tutorial-modal" on:click|stopPropagation>
+        <div class="modal-header">
+          <h2>How to Use This Demo</h2>
+          <button class="modal-close" on:click={() => showTutorialModal = false}>×</button>
+        </div>
+        <div class="modal-body tutorial-body">
+          <h3>Getting Started</h3>
+          <ol>
+            <li><strong>Load an observation</strong> by entering an iNaturalist observation ID (e.g., 47963 which you find in an observation URL, e.g. <a href="https://www.inaturalist.org/observations/47963" target="_blank" rel="noopener noreferrer">https://www.inaturalist.org/observations/47963</a>) in the input field and clicking "Fetch Observation"
+              <ul>
+                <li>Or use <code>0</code> for a blank unknown observation</li>
+                <li>Or use <code>-1</code> for a blank observation with an observer who has opted-out of the community taxon</li>
+                <li>Or click on one of the example images to see a pre-configured scenario</li>
+              </ul>
+            </li>
+          </ol>
+
+          <h3>Exploring the Demo</h3>
+          <ol start="2">
+            <li><strong>Toggle between modes</strong> using the "Current" and "Alternative" radio buttons in the upper right to see how each approach handles subspecies identifications</li>
+            <li><strong>Add identifications</strong> by:
+              <ul>
+                <li>Scrolling to the "Add your identification" section</li>
+                <li>Searching for a taxon by typing in the search box</li>
+                <li>Selecting a taxon from the dropdown</li>
+                <li>Clicking "Add Identification"</li>
+              </ul>
+            </li>
+            <li><strong>View the algorithm</strong> by clicking "what's this?" next to "Community Taxon" to see how the community taxon is calculated</li>
+            <li><strong>Add votes</strong> on whether the Community Taxon can be improved by clicking the checkmarks next to "Yes" or "No, it's as good as it can be"</li>
+            <li><strong>Vote on your preference</strong> between Current and Alternative modes by clicking the "Vote on your preference" button in the upper right</li>
+            <li><strong>Reset the demo</strong> at any time by clicking on the title "iNaturalist Subspecies Identifications Demo"</li>
+          </ol>
+
+          <h3>Understanding the Display</h3>
+          <ul>
+            <li>Watch how the <strong>observation label</strong> (shown at the top) changes as you add identifications</li>
+            <li>The <strong>quality grade</strong> badge shows whether the observation is Research Grade, Needs ID, or Casual</li>
+            <li>The <strong>Community Taxon</strong> box shows the calculated consensus identification</li>
+            <li>Demo identifications and votes have an "×" button to remove them</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <footer class="demo-footer">
+    <p>This is a temporary demo built quickly using <a href="https://claude.ai/claude-code" target="_blank" rel="noopener noreferrer">Claude Code</a>, it does not adhere to the engineering standards of the iNaturalist <a href="https://www.inaturalist.org/" target="_blank" rel="noopener noreferrer">platform</a> or <a href="https://github.com/inaturalist" target="_blank" rel="noopener noreferrer">codebase</a>.</p>
+    <p class="footer-links">
+      <a href="https://github.com/loarie/subspecies_identifications_demo" target="_blank" rel="noopener noreferrer">Source</a>
+      <span class="separator">•</span>
+      <span>Last updated: January 8, 2026</span>
+    </p>
+  </footer>
 </main>
 
 
@@ -2566,6 +2628,24 @@
     gap: 1rem;
   }
 
+  .tutorial-btn {
+    padding: 0.5rem 1rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: white;
+    background-color: #2196f3;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+    width: auto;
+    white-space: nowrap;
+  }
+
+  .tutorial-btn:hover {
+    background-color: #1976d2;
+  }
+
   .survey-btn {
     padding: 0.5rem 1rem;
     font-size: 0.9rem;
@@ -2611,5 +2691,101 @@
   .survey-body :global(iframe) {
     width: 100% !important;
     height: 700px !important;
+  }
+
+  .tutorial-modal {
+    max-width: 800px;
+    width: 90%;
+  }
+
+  .tutorial-body {
+    max-height: calc(90vh - 120px);
+    overflow-y: auto;
+  }
+
+  .tutorial-body h3 {
+    color: #555;
+    font-size: 1.2rem;
+    margin-top: 1.5rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .tutorial-body h3:first-child {
+    margin-top: 0;
+  }
+
+  .tutorial-body ol, .tutorial-body ul {
+    margin-bottom: 1rem;
+    line-height: 1.6;
+  }
+
+  .tutorial-body li {
+    margin-bottom: 0.75rem;
+  }
+
+  .tutorial-body code {
+    background-color: #f5f5f5;
+    padding: 0.2rem 0.4rem;
+    border-radius: 3px;
+    font-family: monospace;
+    font-size: 0.9em;
+  }
+
+  .tutorial-body a {
+    color: #74ac00;
+    text-decoration: none;
+  }
+
+  .tutorial-body a:hover {
+    text-decoration: underline;
+  }
+
+  .tutorial-body ul {
+    list-style-type: disc;
+    padding-left: 1.5rem;
+  }
+
+  .tutorial-body ol {
+    padding-left: 1.5rem;
+  }
+
+  .tutorial-body ul ul {
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .demo-footer {
+    margin-top: 3rem;
+    padding-top: 2rem;
+    border-top: 1px solid #ddd;
+    text-align: center;
+    color: #666;
+    font-size: 0.9rem;
+  }
+
+  .demo-footer p {
+    margin: 0.5rem 0;
+    line-height: 1.6;
+  }
+
+  .demo-footer a {
+    color: #74ac00;
+    text-decoration: none;
+  }
+
+  .demo-footer a:hover {
+    text-decoration: underline;
+  }
+
+  .footer-links {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .footer-links .separator {
+    color: #999;
   }
 </style>
