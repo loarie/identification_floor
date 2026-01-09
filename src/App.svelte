@@ -23,6 +23,7 @@
   let votesDisabled = false;
   let observationTaxon: any = null;
   let observationTaxonUpdateCounter = 0;
+  let previousCommunityTaxonId: number | null = null;
 
   const emojis = ['😊', '🙂', '😎', '🤓', '😀', '🤗', '😃', '😄', '🙃', '😁', '😺', '🐱', '🦊', '🐶', '🐼', '🐨', '🦁', '🐯', '🐸', '🐝'];
 
@@ -607,6 +608,19 @@
       (communityTaxon.id !== observationTaxon.id && !userOptedOutOfCommunityTaxon)
     ) : !communityTaxon;
   })();
+
+  // Reset votes whenever the community taxon changes
+  $: {
+    const currentCommunityTaxonId = communityTaxon?.id || null;
+
+    // If this is not the first run and the community taxon has changed, reset votes
+    if (previousCommunityTaxonId !== null && currentCommunityTaxonId !== previousCommunityTaxonId) {
+      demoVotes = [];
+    }
+
+    // Update the tracked ID
+    previousCommunityTaxonId = currentCommunityTaxonId;
+  }
 
   function openVotesModal(type: 'yes' | 'no') {
     needsIdVotesModalType = type;
