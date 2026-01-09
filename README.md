@@ -42,7 +42,7 @@ The app pulls in real iNaturalist observations and lets you **simulate** differe
 
 ## Status
 
-This is a temporary demo built quickly using [Claude Code](https://claude.ai/claude-code) to explore ideas and facilitate community discussion. It does not adhere to the engineering standards of the [iNaturalist platform](https://www.inaturalist.org/) or [codebase](https://github.com/inaturalist).
+This is a temporary demo built quickly using [Claude Code](https://code.claude.com/docs/en/overview) to explore ideas and facilitate community discussion. It does not adhere to the engineering standards of the [iNaturalist platform](https://www.inaturalist.org/) or [codebase](https://github.com/inaturalist).
 
 The demo will be live only for as long as it takes to come to a path forward. Once we deploy and QA an update to the main site, we will retire this demo.
 

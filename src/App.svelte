@@ -20,6 +20,9 @@
   let showObserverDropdown = false;
   let showSurveyModal = false;
   let showTutorialModal = false;
+  let votesDisabled = false;
+  let observationTaxon: any = null;
+  let observationTaxonUpdateCounter = 0;
 
   const emojis = ['😊', '🙂', '😎', '🤓', '😀', '🤗', '😃', '😄', '🙃', '😁', '😺', '🐱', '🦊', '🐶', '🐼', '🐨', '🦁', '🐯', '🐸', '🐝'];
 
@@ -33,7 +36,7 @@
     if (demoIdentifications.length === 0 && demoVotes.length === 0 && mode === 'current') return;
 
     const params = new URLSearchParams();
-    params.set('obs', observationId);
+    params.set('obs', observation.id.toString());
 
     if (mode !== 'current') {
       params.set('mode', mode);
@@ -590,13 +593,20 @@
   $: noVotes = needsIdVotes.filter(v => v.vote_flag === false);
 
   // Check if votes should be disabled:
-  // Disable if there are no votes AND (no community taxon OR (community taxon doesn't match observation taxon AND user has not opted out))
-  $: votesDisabled = observation ? (
-    needsIdVotes.length === 0 && (
-      !communityTaxon ||
-      (communityTaxon && observation.taxon && communityTaxon.id !== observation.taxon.id && !userOptedOutOfCommunityTaxon)
-    )
-  ) : false;
+  // Enable votes when: community taxon exists AND it matches observation taxon (or user has opted out)
+  // Disable votes when: no community taxon OR community taxon doesn't match observation taxon (unless user opted out)
+  // Reference observation.taxon to ensure we react to changes
+  $: votesDisabled = (() => {
+    // If there are already votes, never disable the voting box
+    if (yesVotes.length > 0 || noVotes.length > 0) {
+      return false;
+    }
+
+    // Otherwise, use the normal logic
+    return observation && observation.taxon && communityTaxon && observationTaxon ? (
+      (communityTaxon.id !== observationTaxon.id && !userOptedOutOfCommunityTaxon)
+    ) : !communityTaxon;
+  })();
 
   function openVotesModal(type: 'yes' | 'no') {
     needsIdVotesModalType = type;
@@ -675,6 +685,31 @@
   $: if (observation && observation.user && allIdentifications !== undefined && communityTaxon !== undefined && userOptedOutOfCommunityTaxon !== undefined && yesVotes !== undefined && noVotes !== undefined && mode !== undefined) {
     updateObservationTaxon();
     updateObservationQualityGrade();
+    // Increment counter after calling updateObservationTaxon to trigger dependent reactive statements
+    observationTaxonUpdateCounter++;
+  }
+
+  // Reactive statement to set observationTaxon based on disagreements
+  // Depends on observationTaxonUpdateCounter which is incremented AFTER updateObservationTaxon completes
+  // If there are disagreements, use communityTaxon
+  // Otherwise, use observation.taxon (which was just set by updateObservationTaxon)
+  $: {
+    // Explicitly depend on the counter so this runs AFTER updateObservationTaxon completes
+    const _counter = observationTaxonUpdateCounter;
+
+    if (!observation) {
+      observationTaxon = null;
+    } else {
+      const hasDisagreement = allIdentifications.some(id => id.disagreement === true);
+
+      if (hasDisagreement && communityTaxon) {
+        // With disagreement, use community taxon
+        observationTaxon = communityTaxon;
+      } else {
+        // No disagreement - use observation.taxon
+        observationTaxon = observation.taxon;
+      }
+    }
   }
 
   // Update URL when demo state changes
@@ -689,33 +724,16 @@
 
     // If user has opted out of community taxon, use only the observer's identification
     if (userOptedOutOfCommunityTaxon) {
-      console.log('=== DEBUG Observer Change ===');
-      console.log('Observer login:', observation.user.login);
-      console.log('Observer id:', observation.user.id);
-      console.log('All identifications:', currentIdentifications.map(id => ({
-        user: id.user.login,
-        taxon: id.taxon?.name,
-        disagreement: id.disagreement
-      })));
-
       // Find the observer's current identification
       const observerIdentification = currentIdentifications.find(
         id => id.user.login === observation.user.login || id.user.id === observation.user.id
       );
 
-      console.log('Found observer identification:', observerIdentification ? {
-        user: observerIdentification.user.login,
-        taxon: observerIdentification.taxon?.name
-      } : null);
-
       if (observerIdentification) {
         observation.taxon = observerIdentification.taxon;
-        console.log('Set observation.taxon to:', observation.taxon?.name);
       } else {
         observation.taxon = null;
-        console.log('No observer identification found, setting taxon to null');
       }
-      console.log('=== END DEBUG ===');
       return;
     }
 
@@ -750,7 +768,12 @@
         // Check if there are any disagreements
         const hasDisagreements = currentIdentifications.some(id => id.disagreement === true);
 
-        if (!hasDisagreements) {
+        if (hasDisagreements) {
+          // If there are disagreements, set to community taxon
+          observation.taxon = communityTaxon;
+          // observationTaxon will be synced by reactive statement after this function completes
+          return;
+        } else {
           // No disagreements - look for the finest taxon that's downstream of (or same as) community taxon
           const downstreamIds = currentIdentifications.filter(id => {
             if (!id.taxon) return false;
@@ -842,10 +865,9 @@
             }
             return;
           }
+          // No downstream IDs found, set to community taxon
+          observation.taxon = communityTaxon;
         }
-
-        // If there are disagreements or no downstream IDs found, set to community taxon
-        observation.taxon = communityTaxon;
       } else {
         // No community taxon yet - find the finest taxon among all IDs that doesn't have disagreements
         // Sort by rank_level (lower = finer) and pick the finest one
@@ -860,6 +882,7 @@
         }
       }
     }
+
   }
 
   function updateObservationQualityGrade() {
@@ -1415,14 +1438,17 @@
           </button>
         </div>
 
-        {#if communityTaxon}
-          <div class="needs-id-votes-section" class:disabled={votesDisabled}>
-            <div class="needs-id-votes-label">
-              Based on the evidence, can the Community Taxon be improved?<br/>
+        <div class="needs-id-votes-section" class:disabled={votesDisabled}>
+          <div class="needs-id-votes-label">
+            Based on the evidence, can the Community Taxon be improved?<br/>
+            {#if communityTaxon}
               Current Community Taxon: {communityTaxon.preferred_common_name
                 ? `${communityTaxon.preferred_common_name} (${communityTaxon.name})`
                 : communityTaxon.name}
-            </div>
+            {:else}
+              Current Community Taxon: None
+            {/if}
+          </div>
             <div class="needs-id-votes-row">
               <div class="vote-option">
                 <button
@@ -1458,7 +1484,6 @@
               </div>
             </div>
           </div>
-        {/if}
       </div>
     </div>
 
@@ -1668,7 +1693,7 @@
   {/if}
 
   <footer class="demo-footer">
-    <p>This is a temporary demo built quickly using <a href="https://claude.ai/claude-code" target="_blank" rel="noopener noreferrer">Claude Code</a>, it does not adhere to the engineering standards of the iNaturalist <a href="https://www.inaturalist.org/" target="_blank" rel="noopener noreferrer">platform</a> or <a href="https://github.com/inaturalist" target="_blank" rel="noopener noreferrer">codebase</a>. The demo will be live only for as long as it takes to come to a path forward. Once we deploy and QA an update to the main site, we will retire this demo.</p>
+    <p>This is a temporary demo built quickly using <a href="https://code.claude.com/docs/en/overview" target="_blank" rel="noopener noreferrer">Claude Code</a>, it does not adhere to the engineering standards of the iNaturalist <a href="https://www.inaturalist.org/" target="_blank" rel="noopener noreferrer">platform</a> or <a href="https://github.com/inaturalist" target="_blank" rel="noopener noreferrer">codebase</a>. The demo will be live only for as long as it takes to come to a path forward. Once we deploy and QA an update to the main site, we will retire this demo.</p>
     <p class="footer-links">
       <a href="https://github.com/loarie/subspecies_identifications_demo" target="_blank" rel="noopener noreferrer">Source</a>
       <span class="separator">•</span>
