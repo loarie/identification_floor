@@ -1,4 +1,4 @@
-# iNaturalist Subspecies Identifications Demo
+# iNaturalist Community Taxon Opt-out Demo
 
 This is a lightweight demo app for exploring how **iNaturalist** handles **subspecies identifications** and how they affect an observation's **community taxon**, **observation taxon**, and **quality grade**.
 
