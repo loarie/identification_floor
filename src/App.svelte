@@ -6,6 +6,7 @@
   let taxonSearchQuery = '';
   let taxonSearchResults: any[] = [];
   let selectedTaxon: any = null;
+  let proactiveDisagreement = false;
   let showTaxonDropdown = false;
   let demoIdentifications: any[] = [];
   let showAlgorithmModal = false;
@@ -48,13 +49,18 @@
       params.set('observer', observation.user.login);
     }
 
-    // Encode demo identifications: taxonId:userLetter:emoji:disagreement
+    // Encode demo identifications: taxonId:userLetter:emoji:disagreement:proactiveDisagreement (only in alternative mode)
     if (demoIdentifications.length > 0) {
       const idsParam = demoIdentifications.map(id => {
         const userLetter = id.user.login.replace('Person', '');
         const emoji = id.user.emoji || '';
         const disagreement = id.disagreement ? '1' : '0';
-        return `${id.taxon.id}:${userLetter}:${encodeURIComponent(emoji)}:${disagreement}`;
+        if (mode === 'alternative') {
+          const proactive = id.proactiveDisagreement ? '1' : '0';
+          return `${id.taxon.id}:${userLetter}:${encodeURIComponent(emoji)}:${disagreement}:${proactive}`;
+        } else {
+          return `${id.taxon.id}:${userLetter}:${encodeURIComponent(emoji)}:${disagreement}`;
+        }
       }).join('|');
       params.set('ids', idsParam);
     }
@@ -100,7 +106,12 @@
     if (idsParam && observation) {
       const idEntries = idsParam.split('|');
       for (const entry of idEntries) {
-        const [taxonId, userLetter, encodedEmoji, disagreement] = entry.split(':');
+        const parts = entry.split(':');
+        const taxonId = parts[0];
+        const userLetter = parts[1];
+        const encodedEmoji = parts[2];
+        const disagreement = parts[3];
+        const proactive = mode === 'alternative' && parts[4] ? parts[4] : '0'; // Only read proactive flag in alternative mode
 
         // Fetch taxon details
         try {
@@ -122,7 +133,8 @@
               current: true,
               created_at: new Date().toISOString(),
               disagreement: disagreement === '1',
-              previous_observation_taxon: disagreement === '1' ? observation.taxon : null
+              previous_observation_taxon: disagreement === '1' ? observation.taxon : null,
+              proactiveDisagreement: mode === 'alternative' ? (proactive === '1') : false
             };
 
             demoIdentifications = [...demoIdentifications, newId];
@@ -563,7 +575,8 @@
       current: true,
       created_at: new Date().toISOString(),
       disagreement: isDisagreement,
-      previous_observation_taxon: previousObservationTaxon
+      previous_observation_taxon: previousObservationTaxon,
+      proactiveDisagreement: proactiveDisagreement
     };
 
     if (isAncestor) {
@@ -577,6 +590,7 @@
       taxonSearchQuery = '';
       selectedTaxon = null;
       taxonSearchResults = [];
+      proactiveDisagreement = false;
     }
   }
 
@@ -598,6 +612,7 @@
     taxonSearchQuery = '';
     selectedTaxon = null;
     taxonSearchResults = [];
+    proactiveDisagreement = false;
   }
 
   function removeDemoIdentification(idToRemove: string) {
@@ -747,7 +762,7 @@
 
   // Reactive statement to set observationTaxon based on disagreements
   // Depends on observationTaxonUpdateCounter which is incremented AFTER updateObservationTaxon completes
-  // If there are disagreements, use communityTaxon
+  // If there are disagreements (or proactive disagreements in alternative mode), use communityTaxon
   // Otherwise, use observation.taxon (which was just set by updateObservationTaxon)
   $: {
     // Explicitly depend on the counter so this runs AFTER updateObservationTaxon completes
@@ -756,7 +771,9 @@
     if (!observation) {
       observationTaxon = null;
     } else {
-      const hasDisagreement = allIdentifications.some(id => id.disagreement === true);
+      const hasDisagreement = allIdentifications.some(id =>
+        id.disagreement === true || (mode === 'alternative' && id.proactiveDisagreement === true)
+      );
 
       if (hasDisagreement && communityTaxon) {
         // With disagreement, use community taxon
@@ -817,8 +834,10 @@
     if (currentIdentifications.length >= 2) {
       // Check if there's a community taxon
       if (communityTaxon) {
-        // Check if there are any disagreements
-        const hasDisagreements = currentIdentifications.some(id => id.disagreement === true);
+        // Check if there are any disagreements (or proactive disagreements in alternative mode)
+        const hasDisagreements = currentIdentifications.some(id =>
+          id.disagreement === true || (mode === 'alternative' && id.proactiveDisagreement === true)
+        );
 
         if (hasDisagreements) {
           // If there are disagreements, set to community taxon
@@ -927,8 +946,11 @@
     }
 
     // Now check needs_id votes to potentially override quality grade
+    // Only apply vote logic in current mode OR in alternative mode when opted-out
     // If false votes (No) > true votes (Yes) AND quality grade is needs_id
-    if (noVotes.length > yesVotes.length && observation.quality_grade === 'needs_id') {
+    const shouldApplyVoteLogic = mode === 'current' || (mode === 'alternative' && userOptedOutOfCommunityTaxon);
+
+    if (shouldApplyVoteLogic && noVotes.length > yesVotes.length && observation.quality_grade === 'needs_id') {
       // Check if observation.taxon matches community.taxon and is finer than family
       // Family rank_level is approximately 30, so finer means < 30
       if (observation.taxon && communityTaxon && observation.taxon.id === communityTaxon.id) {
@@ -938,8 +960,8 @@
         } else {
           observation.quality_grade = 'casual';
         }
-      } else if (mode === 'alternative' && userOptedOutOfCommunityTaxon && observation.taxon && communityTaxon) {
-        // Alternative mode special case: when opted out, if observation taxon is ancestor of community taxon
+      } else if (userOptedOutOfCommunityTaxon && observation.taxon && communityTaxon) {
+        // Special case: when opted out, if observation taxon is ancestor of community taxon
         // and observation taxon is finer than family, make it research grade
         const observationIsAncestor = communityTaxon.ancestor_ids &&
           communityTaxon.ancestor_ids.includes(observation.taxon.id);
@@ -958,8 +980,48 @@
 
     // If true votes (Yes) > false votes (No) AND quality grade is research
     // Then the community is saying the taxon can be improved, so downgrade to needs_id
-    if (yesVotes.length > noVotes.length && observation.quality_grade === 'research') {
+    // Only apply this in current mode OR in alternative mode when opted-out
+    if (shouldApplyVoteLogic && yesVotes.length > noVotes.length && observation.quality_grade === 'research') {
       observation.quality_grade = 'needs_id';
+    }
+
+    // In alternative mode, check proactive disagreements to potentially upgrade from needs_id to research
+    if (mode === 'alternative' && observation.quality_grade === 'needs_id' && communityTaxon) {
+      const allIds = getAllIdentifications(observation);
+
+      // Count proactive disagreements on the community taxon or coarser taxa
+      const proactiveDisagreementsAtOrCoarser = allIds.filter(id => {
+        if (!id.proactiveDisagreement || !id.taxon) return false;
+
+        // Check if ID's taxon is the community taxon
+        if (id.taxon.id === communityTaxon.id) return true;
+
+        // Check if ID's taxon is coarser (ancestor) of the community taxon
+        if (communityTaxon.ancestor_ids && communityTaxon.ancestor_ids.includes(id.taxon.id)) {
+          return true;
+        }
+
+        return false;
+      }).length;
+
+      // Count IDs finer than the community taxon
+      const idsFinerThanCommunity = allIds.filter(id => {
+        if (!id.taxon) return false;
+
+        // Check if ID's taxon is finer (descendant) of the community taxon
+        return id.taxon.ancestor_ids && id.taxon.ancestor_ids.includes(communityTaxon.id);
+      }).length;
+
+      // Calculate the ratio
+      const total = proactiveDisagreementsAtOrCoarser + idsFinerThanCommunity;
+      if (total > 0) {
+        const ratio = proactiveDisagreementsAtOrCoarser / total;
+
+        // If ratio > 2/3, upgrade to research grade
+        if (ratio > 2/3) {
+          observation.quality_grade = 'research';
+        }
+      }
     }
   }
 
@@ -1104,10 +1166,23 @@
       // Ancestor disagreements: IDs marked as disagreements that are ancestors of this taxon
       // These are IDs where disagreement=true AND the ID's taxon is an ancestor of this taxon
       // (but NOT the taxon itself - only apply to downstream/more specific taxa)
+      // Also includes proactive disagreements: IDs with proactiveDisagreement=true count as ancestor disagreements
+      // for any taxon downstream (more specific) than the proactive disagreement ID's taxon
       const ancestorDisagreements = identifications.filter(id => {
-        if (!id.taxon || !id.disagreement) return false;
-        // Check if the ID's taxon is an ancestor of this taxon (not the same taxon)
-        return id.taxon.id !== taxon.id && taxon.ancestor_ids && taxon.ancestor_ids.includes(id.taxon.id);
+        if (!id.taxon) return false;
+
+        // Check for regular disagreement flag
+        if (id.disagreement && id.taxon.id !== taxon.id && taxon.ancestor_ids && taxon.ancestor_ids.includes(id.taxon.id)) {
+          return true;
+        }
+
+        // Check for proactive disagreement flag (only in alternative mode)
+        if (mode === 'alternative' && id.proactiveDisagreement) {
+          // This taxon is downstream if the ID's taxon is an ancestor of this taxon
+          return id.taxon.id !== taxon.id && taxon.ancestor_ids && taxon.ancestor_ids.includes(id.taxon.id);
+        }
+
+        return false;
       });
 
       const score = cumulativeIds.length / (cumulativeIds.length + disagreements.length + ancestorDisagreements.length);
@@ -1147,7 +1222,7 @@
   <div class="header-container">
     <h1 class="clickable-title" on:click={resetApp}>
       <img src="https://static.inaturalist.org/wiki_page_attachments/3154-original.png" alt="iNaturalist logo" class="title-logo" />
-      iNaturalist Community Taxon Opt-out Demo
+      iNaturalist Proactive Disagreements Demo
     </h1>
     <div class="header-disclaimer">
       <div class="disclaimer-line">This demo does not write anything back to iNat.</div>
@@ -1176,7 +1251,7 @@
 
   {#if !observation}
     <div class="demo-intro">
-      <p>This demo compares how iNaturalist currently handles opting out of the Community Taxon versus a proposed alternative approach. Click an example below or enter an observation ID to explore the differences. Click "Tutorial" in the header for detailed instructions. <a href="https://www.inaturalist.org/blog/122781" target="_blank" rel="noopener noreferrer">Read more on our blog</a>.</p>
+      <p>This demo compares how iNaturalist currently handles voting observations out of Needs ID via a DQA metric with an alternative involving proactive disagreements. Click an example below or enter an observation ID to explore the differences. Click "Tutorial" in the header for detailed instructions. <a href="https://www.inaturalist.org/blog/122781" target="_blank" rel="noopener noreferrer">Read more on our blog</a>.</p>
       <div class="demo-links">
         <a href="/subspecies_identifications_demo/?obs=-1&observer=PersonA&ids=155108%3AA%3A%25F0%259F%2598%2580%3A0%7C308801%3AB%3A%25F0%259F%25A4%2597%3A0%7C308801%3AC%3A%25F0%259F%2599%2582%3A0&votes=0%3AB%3A%25F0%259F%25A4%2593" class="demo-link">
           <img src="/subspecies_identifications_demo/current.jpg" alt="Current" />
@@ -1213,7 +1288,7 @@
   {#if observation}
     {#if mode === 'alternative'}
       <div class="alternative-explanation">
-        This mode simulates changing the label and behavior of voting an observation out of Needs ID when the observer has opted out of the Community Taxon.
+        This mode simulates an alternative approach to proactive disagreements.
       </div>
     {/if}
 
@@ -1395,6 +1470,11 @@
                       Disagrees with {identification.previous_observation_taxon.name}
                     </div>
                   {/if}
+                  {#if mode === 'alternative' && identification.proactiveDisagreement}
+                    <div class="disagreement">
+                      Disagrees with finer Identifications
+                    </div>
+                  {/if}
                 </div>
               </div>
               {#if identification.id && typeof identification.id === 'string' && identification.id.startsWith('demo-')}
@@ -1433,6 +1513,17 @@
               </div>
             {/if}
           </div>
+          {#if mode === 'alternative'}
+            <div class="proactive-disagreement-checkbox">
+              <label>
+                <input
+                  type="checkbox"
+                  bind:checked={proactiveDisagreement}
+                />
+                I would disagree with finer identifications
+              </label>
+            </div>
+          {/if}
           <button
             type="button"
             class="submit-id-btn"
@@ -1443,56 +1534,58 @@
           </button>
         </div>
 
-        <div class="needs-id-votes-section" class:disabled={votesDisabled}>
-          <div class="needs-id-votes-label">
-            {#if mode === 'alternative' && userOptedOutOfCommunityTaxon}
-              Is the observer opting-out of the Community Taxon responsive?
-            {:else}
-              Based on the evidence, can the Community Taxon be improved?<br/>
-              {#if communityTaxon}
-                Current Community Taxon: {communityTaxon.preferred_common_name
-                  ? `${communityTaxon.preferred_common_name} (${communityTaxon.name})`
-                  : communityTaxon.name}
+        {#if mode === 'current' || (mode === 'alternative' && userOptedOutOfCommunityTaxon)}
+          <div class="needs-id-votes-section" class:disabled={votesDisabled}>
+            <div class="needs-id-votes-label">
+              {#if userOptedOutOfCommunityTaxon}
+                Is the observer opting-out of the Community Taxon responsive?
               {:else}
-                Current Community Taxon: None
+                Based on the evidence, can the Community Taxon be improved?<br/>
+                {#if communityTaxon}
+                  Current Community Taxon: {communityTaxon.preferred_common_name
+                    ? `${communityTaxon.preferred_common_name} (${communityTaxon.name})`
+                    : communityTaxon.name}
+                {:else}
+                  Current Community Taxon: None
+                {/if}
               {/if}
-            {/if}
-          </div>
-            <div class="needs-id-votes-row">
-              <div class="vote-option">
-                <button
-                  class="vote-checkmark"
-                  on:click={() => addVote(true)}
-                  title="Vote Yes"
-                  disabled={votesDisabled}
-                >✓</button>
-                <span class="vote-label">Yes</span>
-                {#if yesVotes.length > 0}
-                  <button class="vote-count" on:click={() => openVotesModal('yes')}>
-                    ({yesVotes.length})
-                  </button>
-                {:else}
-                  <span class="vote-count-zero">(0)</span>
-                {/if}
-              </div>
-              <div class="vote-option">
-                <button
-                  class="vote-checkmark"
-                  on:click={() => addVote(false)}
-                  title="Vote No"
-                  disabled={votesDisabled}
-                >✓</button>
-                <span class="vote-label">{mode === 'alternative' ? 'No, remove from Needs ID' : "No, it's as good as it can be"}</span>
-                {#if noVotes.length > 0}
-                  <button class="vote-count" on:click={() => openVotesModal('no')}>
-                    ({noVotes.length})
-                  </button>
-                {:else}
-                  <span class="vote-count-zero">(0)</span>
-                {/if}
+            </div>
+              <div class="needs-id-votes-row">
+                <div class="vote-option">
+                  <button
+                    class="vote-checkmark"
+                    on:click={() => addVote(true)}
+                    title="Vote Yes"
+                    disabled={votesDisabled}
+                  >✓</button>
+                  <span class="vote-label">Yes</span>
+                  {#if yesVotes.length > 0}
+                    <button class="vote-count" on:click={() => openVotesModal('yes')}>
+                      ({yesVotes.length})
+                    </button>
+                  {:else}
+                    <span class="vote-count-zero">(0)</span>
+                  {/if}
+                </div>
+                <div class="vote-option">
+                  <button
+                    class="vote-checkmark"
+                    on:click={() => addVote(false)}
+                    title="Vote No"
+                    disabled={votesDisabled}
+                  >✓</button>
+                  <span class="vote-label">No, remove from Needs ID</span>
+                  {#if noVotes.length > 0}
+                    <button class="vote-count" on:click={() => openVotesModal('no')}>
+                      ({noVotes.length})
+                    </button>
+                  {:else}
+                    <span class="vote-count-zero">(0)</span>
+                  {/if}
+                </div>
               </div>
             </div>
-          </div>
+        {/if}
       </div>
     </div>
 
@@ -1684,9 +1777,9 @@
               </ul>
             </li>
             <li><strong>View the algorithm</strong> by clicking "what's this?" next to "Community Taxon" to see how the community taxon is calculated</li>
-            <li><strong>Add votes</strong> on whether the Community Taxon can be improved by clicking the checkmarks next to "Yes" or "No, remove from Needs ID" (in Alternative mode) / "No, it's as good as it can be" (in Current mode)</li>
+            <li><strong>Add votes</strong> on whether the Community Taxon can be improved by clicking the checkmarks next to "Yes" or "No, remove from Needs ID"</li>
             <li><strong>Vote on your preference</strong> between Current and Alternative modes by clicking the "Vote on your preference" button in the upper right</li>
-            <li><strong>Reset the demo</strong> at any time by clicking on the title "iNaturalist Community Taxon Opt-out Demo"</li>
+            <li><strong>Reset the demo</strong> at any time by clicking on the title "iNaturalist Proactive Disagreements Demo"</li>
           </ol>
 
           <h3>Understanding the Display</h3>
@@ -2431,6 +2524,27 @@
   .submit-id-btn:disabled {
     background-color: #ccc;
     cursor: not-allowed;
+  }
+
+  .proactive-disagreement-checkbox {
+    margin: 0.75rem 0;
+    padding: 0.5rem;
+    background-color: #f5f5f5;
+    border-radius: 4px;
+  }
+
+  .proactive-disagreement-checkbox label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    font-size: 0.95rem;
+  }
+
+  .proactive-disagreement-checkbox input[type="checkbox"] {
+    cursor: pointer;
+    width: 18px;
+    height: 18px;
   }
 
   .modal-overlay {
